@@ -1,0 +1,290 @@
+ENCODER SUMMARIES REDUCED batch=64
+resnet18.           features=512.   latency=82.90 ms.   11.2 M    Total params
+resnet34.           features=512.   latency=69.90 ms.   21.3 M    Total params
+resnet50.           features=2048.  latency=119.50 ms.  23.5 M    Total params
+resnet101.          features=2048.  latency=187.10 ms.  42.5 M    Total params
+resnet152.          features=2048.  latency=271.45 ms.  58.1 M    Total params
+resnext50_32x4d.    features=2048.  latency=176.95 ms.  23.0 M    Total params
+resnext101_32x8d.   features=2048.  latency=419.55 ms.  86.7 M    Total params
+wide_resnet50_2.    features=2048.  latency=197.70 ms.  66.8 M    Total params
+wide_resnet101_2.   features=2048.  latency=346.90 ms.  124 M     Total params
+squeezenet1_0.      features=512.   latency=38.45 ms.   735 K     Total params
+squeezenet1_1.      features=512.   latency=20.20 ms.   722 K     Total params
+densenet121.        features=1024.  latency=130.55 ms.  7.0 M     Total params
+densenet169.        features=1664.  latency=157.25 ms.  12.5 M    Total params
+densenet201.        features=1920.  latency=199.70 ms.  18.1 M    Total params
+densenet161.        features=2208.  latency=261.75 ms.  26.5 M    Total params
+mobilenet_v2.       features=1280.  latency=43.70 ms.   2.2 M     Total params
+mobilenet_v3_large. features=960.   latency=40.90 ms.   3.0 M     Total params
+mobilenet_v3_small. features=576.   latency=12.75 ms.   927 K     Total params
+mnasnet0_5.         features=1280.  latency=25.05 ms.   937 K     Total params
+mnasnet0_75.        features=1280.  latency=40.55 ms.   1.9 M     Total params
+mnasnet1_0.         features=1280.  latency=43.70 ms.   3.1 M     Total params
+mnasnet1_3.         features=1280.  latency=52.45 ms.   5.0 M     Total params
+shufflenet_v2_x0_5. features=1024.  latency=10.30 ms.   341 K     Total params
+shufflenet_v2_x1_0. features=1024.  latency=18.30 ms.   1.3 M     Total params
+shufflenet_v2_x1_5. features=1024.  latency=28.00 ms.   2.5 M     Total params
+shufflenet_v2_x2_0. features=2048.  latency=38.85 ms.   5.3 M     Total params
+
+
+FULL PRINT OUT batch=64
+resnet18. features=512. latency=82.90 ms
+  | Name | Type       | Params | In sizes          | Out sizes     
+-------------------------------------------------------------------------
+0 | net  | Sequential | 11.2 M | [64, 3, 244, 244] | [64, 196, 512]
+-------------------------------------------------------------------------
+11.2 M    Trainable params
+0         Non-trainable params
+11.2 M    Total params
+44.706    Total estimated model params size (MB)
+
+resnet34. features=512. latency=69.90 ms
+  | Name | Type       | Params | In sizes          | Out sizes     
+-------------------------------------------------------------------------
+0 | net  | Sequential | 21.3 M | [64, 3, 244, 244] | [64, 196, 512]
+-------------------------------------------------------------------------
+21.3 M    Trainable params
+0         Non-trainable params
+21.3 M    Total params
+85.139    Total estimated model params size (MB)
+
+resnet50. features=2048. latency=119.50 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 23.5 M | [64, 3, 244, 244] | [64, 196, 2048]
+--------------------------------------------------------------------------
+23.5 M    Trainable params
+0         Non-trainable params
+23.5 M    Total params
+94.032    Total estimated model params size (MB)
+
+resnet101. features=2048. latency=187.10 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 42.5 M | [64, 3, 244, 244] | [64, 196, 2048]
+--------------------------------------------------------------------------
+42.5 M    Trainable params
+0         Non-trainable params
+42.5 M    Total params
+170.001   Total estimated model params size (MB)
+
+resnet152. features=2048. latency=271.45 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 58.1 M | [64, 3, 244, 244] | [64, 196, 2048]
+--------------------------------------------------------------------------
+58.1 M    Trainable params
+0         Non-trainable params
+58.1 M    Total params
+232.575   Total estimated model params size (MB)
+
+resnext50_32x4d. features=2048. latency=176.95 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 23.0 M | [64, 3, 244, 244] | [64, 196, 2048]
+--------------------------------------------------------------------------
+23.0 M    Trainable params
+0         Non-trainable params
+23.0 M    Total params
+91.920    Total estimated model params size (MB)
+
+resnext101_32x8d. features=2048. latency=419.55 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 86.7 M | [64, 3, 244, 244] | [64, 196, 2048]
+--------------------------------------------------------------------------
+86.7 M    Trainable params
+0         Non-trainable params
+86.7 M    Total params
+346.969   Total estimated model params size (MB)
+
+wide_resnet50_2. features=2048. latency=197.70 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 66.8 M | [64, 3, 244, 244] | [64, 196, 2048]
+--------------------------------------------------------------------------
+66.8 M    Trainable params
+0         Non-trainable params
+66.8 M    Total params
+267.337   Total estimated model params size (MB)
+
+wide_resnet101_2. features=2048. latency=346.90 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 124 M  | [64, 3, 244, 244] | [64, 196, 2048]
+--------------------------------------------------------------------------
+124 M     Trainable params
+0         Non-trainable params
+124 M     Total params
+499.351   Total estimated model params size (MB)
+
+squeezenet1_0. features=512. latency=38.45 ms
+  | Name | Type       | Params | In sizes          | Out sizes     
+-------------------------------------------------------------------------
+0 | net  | Sequential | 735 K  | [64, 3, 244, 244] | [64, 196, 512]
+-------------------------------------------------------------------------
+735 K     Trainable params
+0         Non-trainable params
+735 K     Total params
+2.942     Total estimated model params size (MB)
+
+squeezenet1_1. features=512. latency=20.20 ms
+  | Name | Type       | Params | In sizes          | Out sizes     
+-------------------------------------------------------------------------
+0 | net  | Sequential | 722 K  | [64, 3, 244, 244] | [64, 196, 512]
+-------------------------------------------------------------------------
+722 K     Trainable params
+0         Non-trainable params
+722 K     Total params
+2.890     Total estimated model params size (MB)
+
+densenet121. features=1024. latency=130.55 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 7.0 M  | [64, 3, 244, 244] | [64, 196, 1024]
+--------------------------------------------------------------------------
+7.0 M     Trainable params
+0         Non-trainable params
+7.0 M     Total params
+27.815    Total estimated model params size (MB)
+
+densenet169. features=1664. latency=157.25 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 12.5 M | [64, 3, 244, 244] | [64, 196, 1664]
+--------------------------------------------------------------------------
+12.5 M    Trainable params
+0         Non-trainable params
+12.5 M    Total params
+49.938    Total estimated model params size (MB)
+
+densenet201. features=1920. latency=199.70 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 18.1 M | [64, 3, 244, 244] | [64, 196, 1920]
+--------------------------------------------------------------------------
+18.1 M    Trainable params
+0         Non-trainable params
+18.1 M    Total params
+72.372    Total estimated model params size (MB)
+
+densenet161. features=2208. latency=261.75 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 26.5 M | [64, 3, 244, 244] | [64, 196, 2208]
+--------------------------------------------------------------------------
+26.5 M    Trainable params
+0         Non-trainable params
+26.5 M    Total params
+105.888   Total estimated model params size (MB)
+
+mobilenet_v2. features=1280. latency=43.70 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 2.2 M  | [64, 3, 244, 244] | [64, 196, 1280]
+--------------------------------------------------------------------------
+2.2 M     Trainable params
+0         Non-trainable params
+2.2 M     Total params
+8.895     Total estimated model params size (MB)
+
+mobilenet_v3_large. features=960. latency=40.90 ms
+  | Name | Type       | Params | In sizes          | Out sizes     
+-------------------------------------------------------------------------
+0 | net  | Sequential | 3.0 M  | [64, 3, 244, 244] | [64, 196, 960]
+-------------------------------------------------------------------------
+3.0 M     Trainable params
+0         Non-trainable params
+3.0 M     Total params
+11.888    Total estimated model params size (MB)
+
+mobilenet_v3_small. features=576. latency=12.75 ms
+  | Name | Type       | Params | In sizes          | Out sizes
+-------------------------------------------------------------------------
+0 | net  | Sequential | 927 K  | [64, 3, 244, 244] | [64, 196, 576]
+-------------------------------------------------------------------------
+927 K     Trainable params
+0         Non-trainable params
+927 K     Total params
+3.708     Total estimated model params size (MB)
+
+mnasnet0_5. features=1280. latency=25.05 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 937 K  | [64, 3, 244, 244] | [64, 196, 1280]
+--------------------------------------------------------------------------
+937 K     Trainable params
+0         Non-trainable params
+937 K     Total params
+3.750     Total estimated model params size (MB)
+
+mnasnet0_75. features=1280. latency=40.55 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 1.9 M  | [64, 3, 244, 244] | [64, 196, 1280]
+--------------------------------------------------------------------------
+1.9 M     Trainable params
+0         Non-trainable params
+1.9 M     Total params
+7.557     Total estimated model params size (MB)
+
+mnasnet1_0. features=1280. latency=43.70 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 3.1 M  | [64, 3, 244, 244] | [64, 196, 1280]
+--------------------------------------------------------------------------
+3.1 M     Trainable params
+0         Non-trainable params
+3.1 M     Total params
+12.409    Total estimated model params size (MB)
+
+mnasnet1_3. features=1280. latency=52.45 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 5.0 M  | [64, 3, 244, 244] | [64, 196, 1280]
+--------------------------------------------------------------------------
+5.0 M     Trainable params
+0         Non-trainable params
+5.0 M     Total params
+20.005    Total estimated model params size (MB)
+
+shufflenet_v2_x0_5. features=1024. latency=10.30 ms
+  | Name | Type       | Params | In sizes          | Out sizes
+--------------------------------------------------------------------------
+0 | net  | Sequential | 341 K  | [64, 3, 244, 244] | [64, 196, 1024]
+--------------------------------------------------------------------------
+341 K     Trainable params
+0         Non-trainable params
+341 K     Total params
+1.367     Total estimated model params size (MB)
+
+shufflenet_v2_x1_0. features=1024. latency=18.30 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 1.3 M  | [64, 3, 244, 244] | [64, 196, 1024]
+--------------------------------------------------------------------------
+1.3 M     Trainable params
+0         Non-trainable params
+1.3 M     Total params
+5.014     Total estimated model params size (MB)
+
+shufflenet_v2_x1_5. features=1024. latency=28.00 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 2.5 M  | [64, 3, 244, 244] | [64, 196, 1024]
+--------------------------------------------------------------------------
+2.5 M     Trainable params
+0         Non-trainable params
+2.5 M     Total params
+9.914     Total estimated model params size (MB)
+
+shufflenet_v2_x2_0. features=2048. latency=38.85 ms
+  | Name | Type       | Params | In sizes          | Out sizes      
+--------------------------------------------------------------------------
+0 | net  | Sequential | 5.3 M  | [64, 3, 244, 244] | [64, 196, 2048]
+--------------------------------------------------------------------------
+5.3 M     Trainable params
+0         Non-trainable params
+5.3 M     Total params
+21.380    Total estimated model params size (MB)
+

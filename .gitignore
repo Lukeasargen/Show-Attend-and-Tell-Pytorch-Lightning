@@ -1,0 +1,18 @@
+__pycache__
+*.pyc
+.ipynb_checkpoints
+
+/logs*
+
+data/*
+!data/readme
+
+!data/coco
+data/coco/*
+!data/coco/readme.md
+
+!data/visualize
+data/visualize/*
+!data/visualize/readme.md
+# ^ No way this is a good to keep a single file
+
