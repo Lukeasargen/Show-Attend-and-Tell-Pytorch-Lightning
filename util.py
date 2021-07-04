@@ -1,9 +1,12 @@
+from collections import OrderedDict
 import json
 
+import numpy as np
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
+from torch.utils.data.sampler import Sampler
 
 
 class CocoCaptionDataset(Dataset):
@@ -36,6 +39,44 @@ class CocoCaptionDataset(Dataset):
         encoded_captions = torch.LongTensor(self.encoded_captions[idx])
         lengths = torch.LongTensor(self.lengths[idx])
         return img, encoded_captions, lengths
+
+
+class BucketSampler(Sampler):
+    """ I used several of the examples from this link below
+        https://discuss.pytorch.org/t/tensorflow-esque-bucket-by-sequence-length/41284/10
+    """
+    def __init__(self, lengths, batch_size, indices=None):
+        self.lengths = lengths
+        self.batch_size = batch_size
+        if indices:
+            self.indices = indices
+        else:
+            self.indices = list(range(len(self.lengths)))
+        self.idx_len_zip = list(zip(self.indices, self.lengths))
+        # Use an OrderedDict with the lengths as keys
+        len_map = OrderedDict()
+        for i, ll in self.idx_len_zip:
+            l = ll[0]  # Due to my custom dataset, the length list has one item
+            if l not in len_map:
+                len_map[l] = [i]  # Create a new lsit for this length
+            else:
+                len_map[l].append(i)  # Add to an existing list
+        # Sort and reverse so the longest sequences are first
+        self.grouped_indices = []
+        for l, idxs in reversed(sorted(len_map.items())):
+            self.grouped_indices.append(idxs)
+
+    def __iter__(self):
+        # Appened the shuffled groups to a new list
+        suffled_grouped_indices = []
+        for indices in self.grouped_indices:
+            # Calling this shuffle on the groups is faster than on the whole zipped list
+            np.random.shuffle(indices)
+            suffled_grouped_indices.extend(indices)
+        return iter(suffled_grouped_indices)
+
+    def __len__(self):
+        return len(self.lengths)
 
 
 def time_to_string(t):
