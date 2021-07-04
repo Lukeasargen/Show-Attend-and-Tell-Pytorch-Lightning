@@ -8,15 +8,16 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 from torch.utils.data import DataLoader
-from torch.utils.data.sampler import SubsetRandomSampler
 from torchvision import transforms as T
 
 from model import SAT
-from util import CocoCaptionDataset, AddGaussianNoise
+from util import CocoCaptionDataset, BucketSampler, AddGaussianNoise
 
 
 def get_args():
     parser = argparse.ArgumentParser()
+    # Early Stop, Mdodel Checkpointing, Plateau Scheduler can use these metrics
+    metric_choices = ["chrf", "bleu1", "bleu2", "bleu3", "bleu4", "gleu", "precision", "recall"]
     # Init and setup
     parser.add_argument('--seed', default=42, type=int,
         help="int. default=42. deterministic seed. cudnn.deterministic is always set True by deafult.")
@@ -30,24 +31,26 @@ def get_args():
         help="store_true. set cudnn.benchmark.")
     parser.add_argument('--precision', default=32, type=int, choices=[16, 32],
         help="int. default=32. 32 for full precision and 16 uses pytorch amp")
-    # Vision Dataset
+    # Dataset
     parser.add_argument('--json', type=str, required=True,
         help="str. REQUIRED. Path to json made in preproces.ipynb.")
     parser.add_argument('--mean', nargs=3, default=[0.485, 0.456, 0.406], type=float,
         help="3 floats. default is imagenet [0.485, 0.456, 0.406].")
     parser.add_argument('--std', nargs=3, default=[0.229, 0.224, 0.225], type=float,
         help="3 floats, default is imagenet [0.229, 0.224, 0.225].")
+    parser.add_argument('--bucket_sampler', default=False, action='store_true',
+        help="store_true. replicate the function of tensorflow bucket_by_sequence_length.")
     # Vision Encoder Parameters
     parser.add_argument('--encoder_arch', default='shufflenet_v2_x0_5', type=str,
         help="str. default=shufflenet_v2_x0_5. torchvision model name.")
     parser.add_argument('--input_size', default=224, type=int,
-        help="int.deafult-224. input size in pixels.")
+        help="int. default=224. input size in pixels.")
     parser.add_argument('--pretrained', default=False, action='store_true')
     parser.add_argument('--encoder_finetune', default=False, action='store_true')
-    parser.add_argument('--encoder_size', default=14, type=int,
-        help="int. default=14. Square size of the encoder feature maps. Square this to get L in the paper.")
+    parser.add_argument('--encoder_size', default=None, type=int,
+        help="int. default=None. Square size of the encoder feature maps. Square this to get L in the paper.")
     parser.add_argument('--encoder_dim', default=None, type=int,
-        help="int. default=None. Adds a 1x1 conv to the encoder with out_channels=encoder_dim. D in the paper.")
+        help="int. default=None. Adds a 1x1 conv to the encoder if out_channels!=encoder_dim. D in the paper.")
     # Text Decoder Parameters
     parser.add_argument('--embed_dim', default=512, type=int,
         help="int. default=512. Dimension of vocab embeddings.")
@@ -57,7 +60,7 @@ def get_args():
         help="int. default=512. Dimension of LSTM hidden states.")
     parser.add_argument('--decoder_layers', default=1, type=int,
         help="int. default=1. Number of LSTM layers.")
-    parser.add_argument('--decoder_teacher_forcing', default=False, action='store_true',
+    parser.add_argument('--decoder_tf', default=False, action='store_true',
         help="store_true. use teacher forcing during training.")
     # General Training Hyperparameters
     parser.add_argument('--batch', default=1, type=int,
@@ -94,6 +97,8 @@ def get_args():
         help="ints. step scheduler milestones.")
     parser.add_argument('--plateau_patience', default=20, type=int,
         help="int. plateau scheduler patience. monitoring the train loss.")
+    parser.add_argument('--plateau_monitor', default='bleu4', type=str, choices=metric_choices,
+        help="str. default=bleu4. which metric to drop the lr.")
     # Validation
     parser.add_argument('--val_interval', default=5, type=int,
         help="int. default=5. check validation every val_interval epochs. assigned to pl's check_val_every_n_epoch.")
@@ -104,7 +109,6 @@ def get_args():
     # Callbacks
     parser.add_argument('--save_top_k', default=1, type=int,
         help="int. default=1. save topk model checkpoints.")
-    metric_choices = ["chrf", "bleu1", "bleu2", "bleu3", "bleu4", "gleu", "precision", "recall"]
     parser.add_argument('--save_monitor', default='bleu4', type=str, choices=metric_choices,
         help="str. default=bleu4. which metric to find topk models.")
     parser.add_argument('--early_stop_monitor', default=None, type=str, choices=metric_choices,
@@ -141,7 +145,7 @@ def main(args):
             filename='{epoch:d}-{step}-{bleu4:.4f}',
             save_top_k=args.save_top_k,
             mode='max',
-            period=1,  # Check every validation epoch
+            every_n_val_epochs=1,
             save_last=True,  # Always save the latest weights
         )
     ]
@@ -166,7 +170,6 @@ def main(args):
         ]),
         T.ColorJitter(brightness=0.16, contrast=0.15, saturation=0.5, hue=0.04),
         T.RandomHorizontalFlip(),
-        # T.RandomVerticalFlip(p=0.1),  # Does this work still for captioning?
         T.RandomGrayscale(),
         T.ToTensor(),
         AddGaussianNoise(std=0.01)
@@ -181,6 +184,8 @@ def main(args):
     args.vocab_size = train_ds.json["vocab_size"]
 
     train_loader = DataLoader(dataset=train_ds,
+            sampler=(BucketSampler(train_ds.lengths, args.batch) if args.bucket_sampler else None),
+            shuffle=(not args.bucket_sampler),
             batch_size=args.batch, num_workers=args.workers,
             persistent_workers=(True if args.workers > 0 else False),
             pin_memory=True)
@@ -193,7 +198,7 @@ def main(args):
     # print("imgs:", type(imgs), imgs.device, imgs.dtype, imgs.shape)
     # print("caps:", type(caps), caps.device, caps.dtype, caps.shape)
     # print("lens:", type(lens), lens.device, lens.dtype, lens.shape)
-    print(" * Effective Batch Size = {}".format(args.batch*args.accumulate))
+    print(f" * Effective Batch Size = {args.batch*args.accumulate}")
 
     model = SAT(**vars(args))
 
@@ -215,7 +220,7 @@ def main(args):
     trainer.fit(
         model=model,
         train_dataloader=train_loader,
-        # val_dataloaders=val_loader
+        val_dataloaders=val_loader
     )
 
 

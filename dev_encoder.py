@@ -12,13 +12,6 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 parser = argparse.ArgumentParser()
 args = parser.parse_args()
 
-args.encoder_arch = "resnet18"
-args.pretrained = False
-args.encoder_finetune = False
-args.mean = 0.5
-args.std = 0.5
-args.encoder_size = 14
-
 
 pretrained = [
     'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152',
@@ -51,33 +44,31 @@ class LitModel(pl.LightningModule):
     def forward(self, x):
         return self.net(x)
 
-steps = 20
-x = torch.zeros(64, 3, 244, 244).to(device)
+steps = 40
+x = torch.zeros(64, 3, 224, 224).to(device)
+
+args.pretrained = False
+args.encoder_finetune = False
+args.mean = 0.5
+args.std = 0.5
 
 for arch in ptmodels:
     args.encoder_dim = None
-
+    args.encoder_size = None
     args.encoder_arch = arch
+
     model = get_encoder(args).to(device)
+
+    # with torch.no_grad(): y = model(x)
+    # print(f"{arch: <19} {y.shape}")
+    # print(f"{args.encoder_dim = } {args.encoder_size = }")
+
     t0 = time.time()
     with torch.no_grad():
         for i in range(steps):
             y = model(x)
-    print(f"\n{arch}. features={y.shape[2]}. latency={(time.time()-t0)*1e3/steps:.2f} ms")
     m = LitModel(model, x).to(device)
     ret = ModelSummary(m)
-    print(ret)
-
-
-
-
-
-
-
-
-
-
-
-
-
+    print(f"{arch: <18} features={y.shape[2]}. latency={(time.time()-t0)*1e3/steps:.2f} ms. params={ret.total_parameters}.")
+    # print(ret)
 

@@ -1,12 +1,9 @@
-from nltk.metrics.scores import accuracy as corpus_accuracy
-from nltk.metrics.scores import precision, recall
 from nltk.translate.bleu_score import corpus_bleu
-from nltk.translate.chrf_score import corpus_chrf
 from nltk.translate.gleu_score import corpus_gleu
 import pytorch_lightning as pl
 import torch
 from torch import nn
-from torch.nn import functional as F, modules
+from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence
 from torchvision import models
 from torchvision.transforms import Normalize
@@ -18,9 +15,10 @@ class FlattenShuffle(nn.Module):
     """
     def __init__(self):
         super(FlattenShuffle, self).__init__()
+
     def forward(self, x):
-        b, c, s1, s2 = x.shape
-        x = x.reshape(b, c, s1*s2)  # Flatten the feature maps to 1 dimension
+        b, c, h, w = x.shape
+        x = x.reshape(b, c, h*w)  # Flatten the feature maps to 1 dimension
         # 0=batch, 1=channels, 2=locations
         return x.permute(0, 2, 1)
 
@@ -39,50 +37,82 @@ def get_encoder(args):
         # Get model features before pooling and linear layers
         # Save final_dim as input to 1x1 conv to transform to encoder_dim features
         if "resnet" in args.encoder_arch or "resnext" in args.encoder_arch:
-            layers = list(m.children())[:-2]  # Remove pooling and fc
-            final_dim = m.fc.in_features
+            layers = list(m.children())[:-3]
+            final_size = 14  # Always 16
+            final_dim = list(m.children())[-3][0].conv1.in_channels
         elif "shufflenet" in args.encoder_arch:
-            layers = list(m.children())[:-1]  # Remove fc
-            final_dim = m.fc.in_features
+            layers = list(m.children())[:-3]
+            final_size = 14  # Always 14
+            final_dim = list(m.children())[-3][1].branch2[0].in_channels
         elif "squeezenet" in args.encoder_arch:
-            layers = list(m.children())[:-1]  # Remove classifer
-            final_dim = 512  # Always 512
+            layers = list(m.children())[:-1]
+            final_size = 13
+            final_dim = 512
         elif "densenet" in args.encoder_arch:
-            layers = list(m.children())[:-1]  # Remove classifer
-            final_dim = m.classifier.in_features
+            layers = list(m.features.children())[:-3]
+            final_size = 14
+            final_dim = list(m.features.children())[-3].norm.num_features
         elif "mobilenet_v2" in args.encoder_arch:
-            layers = list(m.children())[:-1]  # Remove classifer
-            final_dim = m.classifier[1].in_features
+            layers = list(m.features.children())[:-5]
+            final_size = 14
+            final_dim = 96
         elif "mobilenet_v3" in args.encoder_arch:
-            layers = list(m.children())[:-2]  # Remove pooling and classifer
-            final_dim = m.classifier[0].in_features
+            layers = list(m.features.children())[:-4]
+            final_size = 14
+            final_dim = 112 if args.encoder_arch=="mobilenet_v3_large" else 48
         elif "mnasnet" in args.encoder_arch:
-            layers = list(m.children())[:-1]  # Remove pooling and classifer
-            final_dim = m.classifier[1].in_features
+            layers = list(m.layers.children())[:-5]
+            final_size = 14
+            final_dim = list(m.layers.children())[-5][0].layers[0].in_channels
         else:
             raise ValueError("Encoder not supported : {}".format(args.encoder_arch))
 
-        # Combine into a sequential model
-        norm = Normalize(args.mean, args.std, inplace=True)
-        # avg->conv or conv->avg? Avg will change the features locally before the conv op
-        layers.append( nn.AdaptiveAvgPool2d((args.encoder_size, args.encoder_size)) )
-
         if args.encoder_dim is not None and args.encoder_dim!=final_dim:
             # This conv forces the number of features to be encoder_dim
-            # Does not match the paper since this always requires training
+            # Does not match the pretrained encoders in paper since this always requires training
             layers.append( nn.Conv2d(final_dim, args.encoder_dim, kernel_size=1, stride=1, bias=True) )
         else:
-            # Store the encoder dimensions back in the hparams
+            # Store the encoder_dim back in the hparams
             args.encoder_dim = final_dim
+        
+        # TODO : pool->conv or conv->pool? pool will change the features locally before the conv op
+        # For now conv->pool, bc conv will take the actual features as input rather than pooled features
+        if args.encoder_size is not None and args.encoder_size!=final_size:
+            layers.append( nn.AdaptiveAvgPool2d((args.encoder_size, args.encoder_size)) )
+        else:
+            # Store the encoder_size back in the hparams
+            args.encoder_size = final_size
 
         # Layer that flattens the feature maps from 2d to 1d and then
         # reshapes so that there are L feature locations along dim=1, and
         # dim=2 is the representation with size D
-        shuffle = FlattenShuffle()
+        layers.append( FlattenShuffle() )
         
+        # First layer of the model, input is [0,1] normalized images
+        norm = Normalize(args.mean, args.std, inplace=True)
+
         # Returns (batch, encoder_size**2, encoder_dim)
-        return nn.Sequential(norm, *layers, shuffle)
+        return nn.Sequential(norm, *layers)
     raise ValueError("Unknown model arg: {}".format(args.encoder_arch))
+
+
+class InitLSTM(nn.Module):
+    """ Sec 3.1.2 "predicted by an avergage of the annotation vectors feed through two separate MLPs" """
+    def __init__(self, encoder_dim, decoder_dim, decoder_layers, dropout):
+        super(InitLSTM, self).__init__()
+        self.decoder_dim = decoder_dim
+        self.decoder_layers = decoder_layers
+        self.init_h = nn.Linear(encoder_dim, decoder_dim*decoder_layers)
+        self.init_c = nn.Linear(encoder_dim, decoder_dim*decoder_layers)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, annotations):
+        # Mean over the locations (dim=1) to get a vector of length encoder_dim
+        mean = annotations.mean(1)
+        # shape = (decoder_layers, batch, decoder_dim)
+        init_h = self.init_h(mean).reshape(self.decoder_layers, mean.shape[0], self.decoder_dim)
+        init_c = self.init_c(mean).reshape(self.decoder_layers, mean.shape[0], self.decoder_dim)
+        return init_h, init_c
 
 
 class SoftAttention(nn.Module):
@@ -103,18 +133,35 @@ class SoftAttention(nn.Module):
         att_dec = self.decoder_att(decoder_hidden).unsqueeze(1)   # att_dec.shape = (batch, 1, attention_dim)
         # Take all the features and predict and attention value for each location(dim=1)
         att = self.f_att(torch.tanh(att_enc+att_dec))  # att.shape = (batch, attention_dim, 1)
-        # Softamax over the all locations(dim=1)
+        # Softmax over the all locations(dim=1)
         alpha = F.softmax(att, dim=1)  # alpha.shape = (batch, attention_dim, 1)
         # Apply the alphas to the annotations, then sum each feature map over all locations(dim=1)
         zt = (annotations*alpha).sum(dim=1)  # zt.shape = (batch, encoder_dim)
-        return zt, alpha.reshape(alpha.shape[0], -1)
+        return zt, alpha.reshape(alpha.shape[0], -1) # Remove last dim of alpha before return
+
+
+class DeepOutput(nn.Module):
+    """ Sec 3.1.2 Equation 7 - Deep Output Layer """
+    def __init__(self, encoder_dim, decoder_dim, embed_dim, vocab_size, dropout):
+        super(DeepOutput, self).__init__()
+        self.hidden = nn.Linear(decoder_dim, embed_dim)
+        self.context = nn.Linear(encoder_dim, embed_dim)
+        self.output = nn.Linear(embed_dim, vocab_size)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, prev_embed, hidden, context):
+        # logit.shape = (batch, embed_dim)
+        logit = prev_embed + self.hidden(hidden) + self.context(context)
+        # torch.cat([prev_embed, self.hidden(hidden), self.context(context)], dim=1)
+        logit = self.dropout(torch.tanh(logit))
+        return self.output(logit)
 
 
 class SAT(pl.LightningModule):
     """ Shot, Attend, and Tell (SAT)
     Notes:
     -all image encoding is done in self.encoder using convolutional networks
-    -all text decoding is done in this module (beam search, metrics)
+    -all text decoding is done in this LightningModule (ie, beam search)
     """
     def __init__(self, **kwargs):
         super(SAT, self).__init__()
@@ -124,20 +171,12 @@ class SAT(pl.LightningModule):
         # Keep these, a nice list to have around
         self.special_idxs = [self.stoi("<PAD>"), self.stoi("<START>"), self.stoi("<END>")]
 
-        # This is the size of the flattened encoding annotations.
-        # attention_dim is the same as L in the paper.
-        self.hparams.attention_dim = self.hparams.encoder_size**2
-
-        # hidden_dim is the decoder_dum times the decoder_layers
-        # self.hparams.hidden_dim = self.hparams.decoder_dim*self.hparams.decoder_layers
-
         # Call the function to get the encoder architecture.
         self.encoder = get_encoder(self.hparams)
 
-        # self.decoder = Decoder(self.hparams)
-
-        # Dropout is used before intializing the lstm and before projecting to the vocab.
-        self.dropout = nn.Dropout(p=self.hparams.dropout)
+        # This is the size of the flattened encoding annotations.
+        # attention_dim is the same as L in the paper.
+        self.hparams.attention_dim = self.hparams.encoder_size**2
 
         # Sec 3.1.2 - Matrix E is the embedding matrix of shape (vocab_size, embed_dim).
         self.embedding = nn.Embedding(
@@ -146,28 +185,18 @@ class SAT(pl.LightningModule):
             padding_idx=self.stoi("<PAD>")
         )
 
-        # Sec 3.1.2 - Intialize the hidden states based on the mean annotations.
-        # Use 2 separate linear layers for hidden and cell state.
-        self.init_h = nn.Linear(self.hparams.encoder_dim, self.hparams.decoder_dim)
-        self.init_c = nn.Linear(self.hparams.encoder_dim, self.hparams.decoder_dim)
+        # Sec 3.1.2 - Intialize the hidden states based on the mean annotations and two separate MLPs.
+        self.init_lstm = InitLSTM(self.hparams.encoder_dim, self.hparams.decoder_dim,
+                                self.hparams.decoder_layers, self.hparams.dropout)
 
         # Sec 3.1.2 Equations 1, 2, 3 - Apply the LSTM update rules.
-        # Per the paper, input_size is encoder_dim+embed_dim (D+m) and
-        # the hidden_size is decoder_dim (n).
-        self.lstm = nn.LSTMCell(
+        # Per the paper, input_size is encoder_dim+embed_dim (D+m) and the hidden_size is decoder_dim (n).
+        self.lstm = nn.LSTM(
             input_size=self.hparams.embed_dim+self.hparams.encoder_dim,
             hidden_size=self.hparams.decoder_dim,
+            num_layers=self.hparams.decoder_layers,
             bias=True
         )
-        # TODO : nn.LSTM() to add layers, change the size of the init_lstm linear layers
-        # self.lstm = nn.LSTM(
-        #     input_size=self.hparams.embed_dim+self.hparams.encoder_dim,
-        #     hidden_size=self.hparams.decoder_dim,
-        #     num_layers=self.hparams.decoder_layers,
-        #     bias=True,
-        #     batch_first=True,
-        #     dropout=self.hparams.dropout
-        # )
 
         # Sec 3.1.2 Equations 4, 5, 6 - Soft Attention Module
         self.attention = SoftAttention(
@@ -177,11 +206,12 @@ class SAT(pl.LightningModule):
         )
 
         # Sec 4.2.1 - predict gating scalar \beta from previous hidden state
+        # This is outside of the attention module bc the zt vector is needed for deep output
         self.beta = nn.Linear(self.hparams.decoder_dim, self.hparams.encoder_dim)
 
         # Sec 3.1.2 - Deep Output for word prediction
-        # TODO : change to use Equation 7
-        self.deep_output = nn.Linear(self.hparams.decoder_dim, self.hparams.vocab_size)
+        self.deep_output = DeepOutput(self.hparams.encoder_dim, self.hparams.decoder_dim,
+                                    self.hparams.embed_dim, self.hparams.vocab_size, self.hparams.dropout)
 
     def stoi(self, s):
         return int(self.hparams.vocab_stoi.get(s, self.hparams.vocab_stoi['<UNK>']))
@@ -195,27 +225,18 @@ class SAT(pl.LightningModule):
         # Using str() just in case
         return [self.itos(t) for t in seq if keep_token(t)]
 
-    def init_lstm(self, annotations):
-        """ Sec 3.1.2 "predicted by an avergage of the
-            annotation vectors feed through two separate MLPs" """
-        # Mean over the locations (dim=1) to get a vector of length encoder_dim
-        mean = self.dropout(annotations.mean(1))
-        # TODO : Add torch.tanh()? rn these are unbounded
-        return self.init_h(mean), self.init_c(mean)
-        # return torch.tanh(self.init_h(mean)), torch.tanh(self.init_c(mean))
-
-    def caption(self, img_tensor, beamk=3, max_gen_length=32, temperature=0.5, return_all=False,
-                rescore_method=None, rescore_reward=0.5):
+    def caption(self, img_tensor, beamk=3, max_gen_length=32, temperature=0.5, 
+                rescore_method=None, rescore_reward=0.5, return_all=False):
         """ Caption method for better code readability.
             Input img as a batch [B, C, H, W].    
             Output is a list of strings with len()=B.
             rescore_method : None, LN=Length Normalization, WR=Word Reward, BAR=Bounded Adaptive-Reward
             rescore_reward : should be tuned on a dev set
         """
-        return self.forward(img_tensor, beamk, max_gen_length,temperature, return_all, rescore_method, rescore_reward)
+        return self.forward(img_tensor, beamk, max_gen_length,temperature, rescore_method, rescore_reward, return_all)
 
-    def forward(self, img, beamk=3, max_gen_length=32, temperature=0.5, return_all=False,
-                rescore_method=None, rescore_reward=0.5):
+    def forward(self, img, beamk=3, max_gen_length=32, temperature=0.5, 
+                rescore_method=None, rescore_reward=0.5, return_all=False):
         """ Inference Method Only. Use beam search to create a caption. """
         self.eval()  # Freeze all parameters and turn off dropout
 
@@ -225,7 +246,8 @@ class SAT(pl.LightningModule):
         if not isinstance(temperature, list):
             temperature = [temperature]
 
-        captions, cap_scores, cap_alphas = [], [], []  # Create empty return lists, will become the length of the batch
+        # Create empty return lists, will become the length of the batch
+        captions, cap_scores, cap_alphas, cap_perplexity = [], [], [], []
 
         with torch.no_grad():
             # Encode the batch
@@ -249,7 +271,7 @@ class SAT(pl.LightningModule):
 
                 # Keep the -1/log sum
                 # top_scores.shape = (beamk)
-                top_scores = torch.zeros(beamk, dtype=torch.float)
+                top_scores = torch.zeros(beamk, dtype=torch.float).to(self.device)
 
                 # Keep the alphas for visualization
                 # alphas.shape = (step, beamk, attention_dim)
@@ -257,8 +279,9 @@ class SAT(pl.LightningModule):
 
                 # Extend these lists once the <END> is predicted or max_gen_length is reached
                 finished_captions = []
-                finished_scores = []
                 finished_alphas = []
+                finished_scores = []
+                finished_perplexity  = []
 
                 step = 0
                 while True:
@@ -269,11 +292,12 @@ class SAT(pl.LightningModule):
                     k_prev_words = top_preds[step]
 
                     # Forward pass through the model
-                    embeddings = self.embedding(k_prev_words)
-                    zt, alpha = self.attention(annots, h)
-                    beta = torch.sigmoid(self.beta(h))
-                    h, c = self.lstm(torch.cat([embeddings, beta*zt], dim=1), (h, c))
-                    logit = self.deep_output(h)
+                    embed_prev_words = self.embedding(k_prev_words)
+                    zt, alpha = self.attention(annots, h[-1])
+                    beta = torch.sigmoid(self.beta(h[-1]))
+                    h_in = torch.cat([embed_prev_words, beta*zt], dim=1).unsqueeze(0)
+                    _, (h, c) = self.lstm(h_in, (h, c))
+                    logit = self.deep_output(embed_prev_words, h[-1], zt)
 
                     # Use the log probability as the score
                     scores = F.log_softmax(logit/current_temperature, dim=1)
@@ -282,6 +306,8 @@ class SAT(pl.LightningModule):
                     scores[:, [self.stoi("<START>"), self.stoi("<PAD>")]] = float('-inf')
 
                     if step==0:
+                        # Additionally mask the <END> on the first step
+                        scores[:, self.stoi("<END>")]= float('-inf')
                         # Extract the top beamk words for the first image since
                         # the initial predicitons are all the same across the beam batch
                         top_scores, pred_idx = torch.topk(scores[0], beamk)
@@ -311,7 +337,7 @@ class SAT(pl.LightningModule):
                         alphas = torch.cat([alphas[:,keep_idxs], alpha.unsqueeze(0)[:,keep_idxs]], 0)
  
                         # Update other variables for the selected top beamk scores
-                        h, c = h[keep_idxs], c[keep_idxs]
+                        h, c = h[:, keep_idxs], c[:, keep_idxs]
                         annots = annots[keep_idxs]
                     
                     # Now the top_preds,top_scores,alphas,h,c,annots are updated with the latest sequences
@@ -338,13 +364,14 @@ class SAT(pl.LightningModule):
                         finished_alphas.extend([alphas[:,complete][:,i][1:-1].cpu() for i in range(alphas[:,complete].shape[1])])
                         # Get the scores divide by the length
                         finished_scores.extend([rescore(top_scores[complete][i], rescore_method, rescore_reward).tolist() for i in range(top_scores[complete].shape[0])])
+                        finished_perplexity.extend([torch.exp(-top_scores[complete][i]/step).tolist() for i in range(top_scores[complete].shape[0])])
 
                         # Reduce the beam batch to only the incomplete sequences
                         incomplete = torch.logical_not(complete)
                         top_preds = top_preds[:,incomplete]
                         alphas = alphas[:,incomplete]
                         top_scores = top_scores[incomplete]
-                        h, c = h[incomplete], c[incomplete]
+                        h, c = h[:, incomplete], c[:, incomplete]
                         annots = annots[incomplete]
 
                         # Update the beamk value
@@ -357,6 +384,7 @@ class SAT(pl.LightningModule):
                         finished_captions.extend([top_preds[:,i][1:-1].tolist() for i in range(top_preds.shape[1])])
                         finished_alphas.extend([alphas[:,i][1:-1].cpu() for i in range(alphas.shape[1])])
                         finished_scores.extend([rescore(top_scores[i], rescore_method, rescore_reward).tolist() for i in range(top_scores.shape[0])])
+                        finished_perplexity.extend([torch.exp(-top_scores[i]/step).tolist() for i in range(top_scores.shape[0])])                        
                         break
 
                     step += 1  # All updates are complete, iterate the step count
@@ -369,18 +397,20 @@ class SAT(pl.LightningModule):
                     score_index.sort(reverse=True)
                     score_index = [x[1] for x in score_index]
                     captions.append([finished_captions[i] for i in score_index])
+                    cap_alphas.append([finished_alphas[i] for i in score_index])
                     cap_scores.append([finished_scores[i] for i in score_index])
-                    cap_alphas.append([finished_alphas[i] for i in score_index])                
+                    cap_perplexity.append([finished_perplexity[i] for i in score_index])         
                 else:
                     best_idx = finished_scores.index(max(finished_scores))
                     captions.append(finished_captions[best_idx])
-                    cap_scores.append(finished_scores[best_idx])
                     cap_alphas.append(finished_alphas[best_idx])
+                    cap_scores.append(finished_scores[best_idx])
+                    cap_perplexity.append(finished_perplexity[best_idx])
 
             # End of the img batch loop
         
         # Return these lists, which are the length of the batch
-        return captions, cap_scores, cap_alphas
+        return captions, cap_scores, cap_alphas, cap_perplexity
 
     def training_step(self, batch, batch_idx):
         """ Method used only during training. """
@@ -398,9 +428,6 @@ class SAT(pl.LightningModule):
         lengths = torch.squeeze(lengths)
         # Shift the caption to the left to get the targets. The target is the next word
         targets = encoded_captions[:, 1:]
-        # Convert the token indexes into embedding vectors
-        # embeddings.shape = (batch, max_cap_length, embed_dim)
-        embeddings = self.embedding(encoded_captions)
 
         # Initialize the lstm states with the annotations as input
         # states.shape = (batch, decoder_dim)
@@ -418,28 +445,38 @@ class SAT(pl.LightningModule):
         # NOTE : the batch dimension will reduce as the captions are completed
         for step in range(caplen-1):
             # Boolean vector indicating which captions have not ended at this step 
-            mask_idxs = lengths>step  # Squeeze to reduce to 1D
+            mask_idxs = lengths>step
             if not any(mask_idxs): break  # All the captions are done
 
-            # Compute the attention contex vector from the annotations and the previous hiden state
+            # On the fist step get the start tokens, for step>0 check decoder_tf
+            if step==0 or self.hparams.decoder_tf:
+                # Get the actual next word embedding
+                embed_prev_words = self.embedding(encoded_captions[mask_idxs, step])
+            else:
+                # Get the argmax of the logits
+                idxs = torch.argmax(logits[mask_idxs, step-1, :], dim=1)
+                # Get the predicted next word embedding
+                embed_prev_words = self.embedding(idxs)
+
+            # Compute the attention context vector from the annotations and the previous hidden state
             # zt.shape, alpha.shape = (batch, encoder_dim)
-            zt, alpha = self.attention(annotations[mask_idxs], h[mask_idxs])
+            zt, alpha = self.attention(annotations[mask_idxs], h[-1, mask_idxs])            
             # Save the alpha values
             alphas[mask_idxs, step, :] = alpha
 
             # Compute the gating scalar beta from the previous hidden state
             # beta.shape = (batch, encoder_dim). Notice this matches zt so we can do the element wise product
-            beta = torch.sigmoid(self.beta(h[mask_idxs, :]))
+            beta = torch.sigmoid(self.beta(h[-1, mask_idxs].squeeze(1)))  # squeeze to remove the length dim
+
+            # Prepare to enter the lstm with shape (1, batch, embed_dim+enocder_dim)
+            h_in = torch.cat([embed_prev_words, beta*zt], dim=1).unsqueeze(0)
 
             # Compute the new hidden states
-            h[mask_idxs], c[mask_idxs] = self.lstm(
-                torch.cat([embeddings[mask_idxs, step, :], beta*zt], dim=1),  # dim=0 is batch, so concatenate along dim=1
-                (h[mask_idxs], c[mask_idxs])
-            )
+            _, (h[:, mask_idxs], c[:, mask_idxs]) = self.lstm(h_in, (h[:, mask_idxs], c[:, mask_idxs]))
 
             # Compute the word logits
-            logit = self.deep_output(self.dropout(h[mask_idxs]))
-            logits[mask_idxs, step, :] = logit
+            logit = self.deep_output(embed_prev_words, h[-1, mask_idxs], zt)
+            logits[mask_idxs, step, :] = logit.clone().float()  # clone because float() is an inplace operation
 
         # End of the loop
 
@@ -472,23 +509,12 @@ class SAT(pl.LightningModule):
             key = "{}/train_epoch".format(k)
             val = torch.stack([x[k] for x in outputs]).mean().detach().item()
             self.logger.experiment.add_scalar(key, val, global_step=self.current_epoch+1)
-            if k=="loss": avg_loss = val  # For plateau scheduler
 
         # Log lr
         lr = self.optimizers().param_groups[0]['lr']
         self.logger.experiment.add_scalar('Learning Rate', lr, global_step=self.current_epoch+1)
-
-        # Step scheduler
-        if type(self.scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
-            self.scheduler.step(avg_loss)
-        elif type(self.scheduler) in [torch.optim.lr_scheduler.MultiStepLR, torch.optim.lr_scheduler.ExponentialLR]:
-            self.scheduler.step()
     
-    def validation_step(self, batch, batch_idx):
-        """ Method used only for validation. """
-        img, encoded_captions, lengths = batch  # Unpack
-        captions, scores, alphas = self.caption(img, beamk=self.hparams.val_beamk, max_gen_length=self.hparams.val_max_len, rescore_method="LN")
-
+    def score_captions(self, encoded_captions, lengths, captions, perplexities=None):
         # Remove <PAD> <START> <END>
         references = [[c[1:l] for c,l in zip(refs, lengths[i])] for i,refs in enumerate(encoded_captions.tolist())]
 
@@ -498,42 +524,43 @@ class SAT(pl.LightningModule):
         bleu3 = corpus_bleu(references, captions, weights=(0.33, 0.33, 0.33, 0))
         bleu4 = corpus_bleu(references, captions, weights=(0.25, 0.25, 0.25, 0.25))
         gleu = corpus_gleu(references, captions)
-        gleu = corpus_gleu(references, captions)
 
-        # Convert to list of strings for the CHRF (Character n-gram F-score)
-        captions_str, references_str = [], []
-        for refs, c in zip(references, captions):
-            str_cap = self.decode_seq(c, remove_special=True)
-            for r  in refs:
-                str_ref = self.decode_seq(r, remove_special=True)
-                references_str.append(str_ref)
-                captions_str.append(str_cap)
-                # compute the accuracy and keep the highest one
+        # TODO : does this idea work?
+        # Average the embedding vectors of the sequences and use
+        # the maximum cosine similarity with the references
+        cossims = torch.zeros(encoded_captions.shape[0], dtype=torch.float).to(self.device)
+        for i in range(encoded_captions.shape[0]):
+            # Caption mean embedding
+            cv = self.embedding(torch.LongTensor(captions[i]).to(self.device)).mean(0).unsqueeze(0)
+            rvs = torch.zeros(encoded_captions.shape[1], dtype=torch.float).to(self.device)
+            for j, l in enumerate(lengths[i]):
+                ec = encoded_captions[i][j][1:l]  # Slice without START and END
+                # Reference mean embedding
+                rv = self.embedding(ec).mean(0).unsqueeze(0)
+                rvs[j] = F.cosine_similarity(rv, cv)
+            # Take the maximum similarity
+            cossims[i] = max(rvs)
+        # Average of the best similarities
+        cosine_similarity = cossims.mean()
 
-        # recall is considered beta times as important as precision
-        chrf = corpus_chrf(references_str, captions_str, beta=3)
-
-        # acc = corpus_accuracy(references_str, captions_str)  # Hmm, this doesn't tell much
-
-        captions_set = set([x for c in captions for x in c])
-        references_set = set(encoded_captions.reshape(-1).tolist()) # - set(self.special_idxs)
-        prec = precision(references_set, captions_set)
-        reca = recall(references_set, captions_set)
-
-        # TODO : Not sure how to do the loss against multiple targets
         # Create metrics dict
         metrics = {
-            # "accuracy": acc,
-            "chrf": chrf,
-            "bleu1": bleu1,
-            "bleu2": bleu2,
-            "bleu3": bleu3,
-            "bleu4": bleu4,
+            "bleu1": bleu1, "bleu2": bleu2, "bleu3": bleu3, "bleu4": bleu4,
             "gleu": gleu,
-            "precision": prec,
-            "recall": reca,
+            "cosine_similarity": cosine_similarity.item()
         }
+        if type(perplexities)==list: metrics.update({"perplexity": sum(perplexities)/len(perplexities)})
         return metrics
+
+    def val_batch(self, batch, beamk=3, max_gen_length=32, temperature=0.5, rescore_method=None, rescore_reward=0.5):
+        img, encoded_captions, lengths = batch  # Unpack
+        captions, scores, alphas, perplexities = self.caption(img, beamk, max_gen_length, temperature, rescore_method, rescore_reward)
+        metrics = self.score_captions(encoded_captions, lengths, captions, perplexities)
+        return metrics
+
+    def validation_step(self, batch, batch_idx):
+        """ Method used only for validation. """
+        return self.val_batch(batch, beamk=self.hparams.val_beamk, max_gen_length=self.hparams.val_max_len, rescore_method="LN")
 
     def validation_epoch_end(self, outputs): 
         # Calculate epoch metrics 
@@ -548,6 +575,13 @@ class SAT(pl.LightningModule):
             # Use self.log() for the checkpoint callbacks
             if k==self.hparams.save_monitor: self.log(k, val)
             if k==self.hparams.early_stop_monitor: self.log(k, val)
+            if k==self.hparams.plateau_monitor: plateau_val = val  # For plateau scheduler
+
+        # Step scheduler
+        if type(self.scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
+            self.scheduler.step(plateau_val)
+        elif type(self.scheduler) in [torch.optim.lr_scheduler.MultiStepLR, torch.optim.lr_scheduler.ExponentialLR]:
+            self.scheduler.step()
 
     def configure_optimizers(self):
 
@@ -565,7 +599,7 @@ class SAT(pl.LightningModule):
             return [{'params': no_decay, 'lr': lr, 'weight_decay': 0.0},
                     {'params': decay, 'lr': lr, 'weight_decay': weight_decay}]
 
-        decoder_modules = [self.init_h, self.init_c, self.lstm, self.attention, self.beta, self.deep_output]
+        decoder_modules = [self.init_lstm, self.lstm, self.attention, self.beta, self.deep_output]
         if self.hparams.weight_decay != 0:
             params = add_weight_decay(decoder_modules, self.hparams.weight_decay, self.hparams.decoder_lr)
             # I don't think embeddings use weight_decay
@@ -587,7 +621,7 @@ class SAT(pl.LightningModule):
         if self.hparams.scheduler == 'step':
             self.scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.hparams.milestones, gamma=self.hparams.lr_gamma)
         elif self.hparams.scheduler == 'plateau':
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=self.hparams.lr_gamma, patience=self.hparams.patience, verbose=True)
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=self.hparams.lr_gamma, patience=self.hparams.plateau_patience)
         elif self.hparams.scheduler == 'exp':
             self.scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=self.hparams.lr_gamma)
 

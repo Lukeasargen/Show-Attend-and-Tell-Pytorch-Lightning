@@ -15,14 +15,14 @@ captions = [
     ["c", "d", "e", "f"],
 ]
 
-# references = [
-#     [[1, 2, 3, 4, 5, 6], [3, 4, 5, 6], [5, 6, 7, 8]],
-#     [[1, 2, 3, 4, 5, 6], [3, 4, 5, 6], [5, 6, 7, 8]],
-# ]
-# captions = [
-#     [2, 4, 5, 6, 7],
-#     [1, 3, 6, 7, 8, 9],
-# ]
+references = [
+    [[1, 2, 3, 4, 5, 6], [3, 4, 5, 6], [5, 6, 7, 8]],
+    [[1, 2, 3, 4, 5, 6], [3, 4, 5, 6], [5, 6, 7, 8]],
+]
+captions = [
+    [2, 4, 5, 6, 7],
+    [1, 3, 6, 7, 8, 9],
+]
 
 bleu1 = corpus_bleu(references, captions, weights=(1.0, 0, 0, 0))
 bleu2 = corpus_bleu(references, captions, weights=(0.5, 0.5, 0, 0))
@@ -33,46 +33,39 @@ print(f"{bleu2 = }")
 print(f"{bleu3 = }")
 print(f"{bleu4 = }")
 
-
 gleu = corpus_gleu(references, captions)
 print(f"{gleu = }")
 
 # This has a divide by zero error
-nist = corpus_nist(references, captions, n=4)
-print(f"{nist = }")
+# nist = corpus_nist(references, captions, n=4)
+# print(f"{nist = }")
 
 # This has a divide by zero error
-ribes = corpus_ribes(references, captions)
-print(f"{ribes = }")
+# ribes = corpus_ribes(references, captions)
+# print(f"{ribes = }")
 
 
+# cr, cc = [], []
+# for refs, c in zip(references, captions):
+#     mc = " ".join(c)
+#     mr = []
+#     for r  in refs:
+#         cr.append(r)
+#         cc.append(c)
+#         mr.append(" ".join(r))
+#     # m = meteor_score(mr, mc)
+#     # print(f"{m = }")
 
+# # Requires strings
+# chrf = corpus_chrf(cr, cc)
+# print(f"{chrf = }")
 
+# from nltk.metrics.scores import accuracy as corpus_accuracy
+# acc = corpus_accuracy(cr, cc)
+# print(f"{acc = }")
 
-cr, cc = [], []
-for refs, c in zip(references, captions):
-    mc = " ".join(c)
-    mr = []
-    for r  in refs:
-        cr.append(r)
-        cc.append(c)
-        mr.append(" ".join(r))
-    # m = meteor_score(mr, mc)
-    # print(f"{m = }")
-
-
-# Requires strings
-chrf = corpus_chrf(cr, cc)
-print(f"{chrf = }")
-
-
-
-from nltk.metrics.scores import accuracy as corpus_accuracy
-acc = corpus_accuracy(cr, cc)
-print(f"{acc = }")
-
-print(f"{cr = }")
-print(f"{cc = }")
+# print(f"{cr = }")
+# print(f"{cc = }")
 
 
 
