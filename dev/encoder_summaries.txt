@@ -1,28 +1,28 @@
-ENCODER SUMMARIES REDUCED batch=64
-resnet18           features=256.  latency=44.95 ms.  params= 2782784.
-resnet34           features=256.  latency=43.65 ms.  params= 8170304.
-resnet50           features=1024. latency=83.30 ms.  params= 8543296.
-resnet101          features=1024. latency=144.58 ms. params=27535424.
-resnet152          features=1024. latency=222.13 ms. params=43179072.
-resnext50_32x4d    features=1024. latency=114.55 ms. params= 8435008.
-resnext101_32x8d   features=1024. latency=326.03 ms. params=57996608.
-wide_resnet50_2    features=1024. latency=144.05 ms. params=24862528.
-wide_resnet101_2   features=1024. latency=266.15 ms. params=82865984.
-squeezenet1_0      features=512.  latency=41.93 ms.  params=  735424.
-squeezenet1_1      features=512.  latency=30.03 ms.  params=  722496.
-densenet121        features=1024. latency=109.00 ms. params= 4267392.
-densenet169        features=1280. latency=122.68 ms. params=15745792.
-densenet201        features=1792. latency=158.60 ms. params= 9501312.
-densenet161        features=2112. latency=208.65 ms. params=14746368.
-mobilenet_v2       features=96.   latency=32.68 ms.  params=  542528.
-mobilenet_v3_large features=112.  latency=23.90 ms.  params=  792488.
-mobilenet_v3_small features=48.   latency=8.48 ms.   params=  190520.
-mnasnet0_5         features=48.   latency=16.03 ms.  params=  142408.
-mnasnet0_75        features=72.   latency=23.83 ms.  params=  307304.
-mnasnet1_0         features=96.   latency=27.08 ms.  params=  473256.
-mnasnet1_3         features=128.  latency=36.18 ms.  params=  801384.
-shufflenet_v2_x0_5 features=96.   latency=6.83 ms.   params=   53184.
-shufflenet_v2_x1_0 features=232.  latency=12.60 ms.  params=  275068.
-shufflenet_v2_x1_5 features=352.  latency=18.48 ms.  params=  614848.
-shufflenet_v2_x2_0 features=488.  latency=24.68 ms.  params= 1163132.
+ENCODER SUMMARIES REDUCED batch=64 with no_grad
+resnet18           features=512.  latency=37.73 ms.  params=11176512. gpu_mem=0.109 GB.
+resnet34           features=512.  latency=57.66 ms.  params=21284672. gpu_mem=0.150 GB.
+resnet50           features=2048. latency=130.14 ms. params=23508032. gpu_mem=0.237 GB.
+resnet101          features=2048. latency=191.98 ms. params=42500160. gpu_mem=0.312 GB.
+resnet152          features=2048. latency=258.62 ms. params=58143808. gpu_mem=0.376 GB.
+resnext50_32x4d    features=2048. latency=158.80 ms. params=22979904. gpu_mem=0.235 GB.
+resnext101_32x8d   features=2048. latency=375.39 ms. params=86742336. gpu_mem=0.494 GB.
+wide_resnet50_2    features=2048. latency=199.48 ms. params=66834240. gpu_mem=0.411 GB.
+wide_resnet101_2   features=2048. latency=318.12 ms. params=124837696. gpu_mem=0.645 GB.
+squeezenet1_0      features=512.  latency=49.51 ms.  params=735424. gpu_mem=0.067 GB.
+squeezenet1_1      features=512.  latency=39.09 ms.  params=722496. gpu_mem=0.067 GB.
+densenet121        features=1024. latency=135.59 ms. params=6953856. gpu_mem=0.118 GB.
+densenet169        features=1664. latency=171.86 ms. params=12484480. gpu_mem=0.173 GB.
+densenet201        features=1920. latency=215.67 ms. params=18092928. gpu_mem=0.208 GB.
+densenet161        features=2208. latency=272.44 ms. params=26472000. gpu_mem=0.257 GB.
+mobilenet_v2       features=1280. latency=57.98 ms.  params=2223872. gpu_mem=0.112 GB.
+mobilenet_v3_large features=960.  latency=43.94 ms.  params=2971952. gpu_mem=0.099 GB.
+mobilenet_v3_small features=576.  latency=20.20 ms.  params=927008. gpu_mem=0.071 GB.
+mnasnet0_5         features=1280. latency=40.54 ms.  params=937512. gpu_mem=0.107 GB.
+mnasnet0_75        features=1280. latency=49.69 ms.  params=1889208. gpu_mem=0.111 GB.
+mnasnet1_0         features=1280. latency=54.55 ms.  params=3102312. gpu_mem=0.115 GB.
+mnasnet1_3         features=1280. latency=66.05 ms.  params=5001256. gpu_mem=0.123 GB.
+shufflenet_v2_x0_5 features=1024. latency=26.69 ms.  params=341792. gpu_mem=0.091 GB.
+shufflenet_v2_x1_0 features=1024. latency=32.18 ms.  params=1253604. gpu_mem=0.095 GB.
+shufflenet_v2_x1_5 features=1024. latency=40.91 ms.  params=2478624. gpu_mem=0.100 GB.
+shufflenet_v2_x2_0 features=2048. latency=65.60 ms.  params=5344996. gpu_mem=0.163 GB.
 

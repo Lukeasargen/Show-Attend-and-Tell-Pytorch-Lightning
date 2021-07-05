@@ -34,36 +34,33 @@ def get_encoder(args):
             for param in m.parameters():
                 param.requires_grad = False
 
+        # TODO : change back to the previous extractors 
         # Get model features before pooling and linear layers
         # Save final_dim as input to 1x1 conv to transform to encoder_dim features
+        # Save final_size to see if !=args.encoder_size, used in AdaptiveAvgPool2d
+        final_size = 7  # All models use 7, except squeeznets which if set in the if block
         if "resnet" in args.encoder_arch or "resnext" in args.encoder_arch:
-            layers = list(m.children())[:-3]
-            final_size = 14  # Always 16
-            final_dim = list(m.children())[-3][0].conv1.in_channels
+            layers = list(m.children())[:-2]  # Remove pooling and fc
+            final_dim = m.fc.in_features
         elif "shufflenet" in args.encoder_arch:
-            layers = list(m.children())[:-3]
-            final_size = 14  # Always 14
-            final_dim = list(m.children())[-3][1].branch2[0].in_channels
+            layers = list(m.children())[:-1]  # Remove fc
+            final_dim = m.fc.in_features
         elif "squeezenet" in args.encoder_arch:
-            layers = list(m.children())[:-1]
-            final_size = 13
+            layers = list(m.children())[:-1]  # Remove classifer
             final_dim = 512
+            final_size = 13
         elif "densenet" in args.encoder_arch:
-            layers = list(m.features.children())[:-3]
-            final_size = 14
-            final_dim = list(m.features.children())[-3].norm.num_features
+            layers = list(m.children())[:-1]  # Remove classifer
+            final_dim = m.classifier.in_features
         elif "mobilenet_v2" in args.encoder_arch:
-            layers = list(m.features.children())[:-5]
-            final_size = 14
-            final_dim = 96
+            layers = list(m.children())[:-1]  # Remove classifer
+            final_dim = m.classifier[1].in_features
         elif "mobilenet_v3" in args.encoder_arch:
-            layers = list(m.features.children())[:-4]
-            final_size = 14
-            final_dim = 112 if args.encoder_arch=="mobilenet_v3_large" else 48
+            layers = list(m.children())[:-2]  # Remove pooling and classifer
+            final_dim = m.classifier[0].in_features
         elif "mnasnet" in args.encoder_arch:
-            layers = list(m.layers.children())[:-5]
-            final_size = 14
-            final_dim = list(m.layers.children())[-5][0].layers[0].in_channels
+            layers = list(m.children())[:-1]  # Remove pooling and classifer
+            final_dim = m.classifier[1].in_features
         else:
             raise ValueError("Encoder not supported : {}".format(args.encoder_arch))
 
@@ -78,7 +75,14 @@ def get_encoder(args):
         # TODO : pool->conv or conv->pool? pool will change the features locally before the conv op
         # For now conv->pool, bc conv will take the actual features as input rather than pooled features
         if args.encoder_size is not None and args.encoder_size!=final_size:
-            layers.append( nn.AdaptiveAvgPool2d((args.encoder_size, args.encoder_size)) )
+            if args.encoder_size < final_size:
+                # Going to a smaller map uses average pooling
+                layers.append( nn.AdaptiveAvgPool2d((args.encoder_size, args.encoder_size)) )
+            elif args.encoder_size > final_size:
+                # Average pooling uses nearest neighbor for upsampling, but sometimes it interpolates
+                # To avoid not knowning what upsampling happens, force a behavior with nn.Upsample
+                # Setting align_corners=False is the default, but it is set explicitly to suppress warnings
+                layers.append( nn.Upsample((args.encoder_size, args.encoder_size), mode="bilinear", align_corners=False) )    
         else:
             # Store the encoder_size back in the hparams
             args.encoder_size = final_size
@@ -447,6 +451,8 @@ class SAT(pl.LightningModule):
             # Boolean vector indicating which captions have not ended at this step 
             mask_idxs = lengths>step
             if not any(mask_idxs): break  # All the captions are done
+
+            # TODO : teacher forcing schedule
 
             # On the fist step get the start tokens, for step>0 check decoder_tf
             if step==0 or self.hparams.decoder_tf:
