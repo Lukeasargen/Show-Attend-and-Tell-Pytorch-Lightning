@@ -1,5 +1,5 @@
 from nltk.translate.bleu_score import corpus_bleu
-from nltk.translate.gleu_score import corpus_gleu
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch import nn
@@ -34,7 +34,6 @@ def get_encoder(args):
             for param in m.parameters():
                 param.requires_grad = False
 
-        # TODO : change back to the previous extractors 
         # Get model features before pooling and linear layers
         # Save final_dim as input to 1x1 conv to transform to encoder_dim features
         # Save final_size to see if !=args.encoder_size, used in AdaptiveAvgPool2d
@@ -67,7 +66,7 @@ def get_encoder(args):
         if args.encoder_dim is not None and args.encoder_dim!=final_dim:
             # This conv forces the number of features to be encoder_dim
             # Does not match the pretrained encoders in paper since this always requires training
-            layers.append( nn.Conv2d(final_dim, args.encoder_dim, kernel_size=1, stride=1, bias=True) )
+            layers.append(nn.Conv2d(final_dim, args.encoder_dim, kernel_size=1, stride=1, bias=True))
         else:
             # Store the encoder_dim back in the hparams
             args.encoder_dim = final_dim
@@ -77,12 +76,12 @@ def get_encoder(args):
         if args.encoder_size is not None and args.encoder_size!=final_size:
             if args.encoder_size < final_size:
                 # Going to a smaller map uses average pooling
-                layers.append( nn.AdaptiveAvgPool2d((args.encoder_size, args.encoder_size)) )
+                layers.append(nn.AdaptiveAvgPool2d((args.encoder_size, args.encoder_size)))
             elif args.encoder_size > final_size:
                 # Average pooling uses nearest neighbor for upsampling, but sometimes it interpolates
                 # To avoid not knowning what upsampling happens, force a behavior with nn.Upsample
                 # Setting align_corners=False is the default, but it is set explicitly to suppress warnings
-                layers.append( nn.Upsample((args.encoder_size, args.encoder_size), mode="bilinear", align_corners=False) )    
+                layers.append(nn.Upsample((args.encoder_size, args.encoder_size), mode="bilinear", align_corners=False))
         else:
             # Store the encoder_size back in the hparams
             args.encoder_size = final_size
@@ -90,12 +89,12 @@ def get_encoder(args):
         # Layer that flattens the feature maps from 2d to 1d and then
         # reshapes so that there are L feature locations along dim=1, and
         # dim=2 is the representation with size D
-        layers.append( FlattenShuffle() )
+        layers.append(FlattenShuffle())
         
         # First layer of the model, input is [0,1] normalized images
         norm = Normalize(args.mean, args.std, inplace=True)
 
-        # Returns (batch, encoder_size**2, encoder_dim)
+        # Sequential model returns shape (batch, encoder_size**2, encoder_dim)
         return nn.Sequential(norm, *layers)
     raise ValueError("Unknown model arg: {}".format(args.encoder_arch))
 
@@ -239,6 +238,7 @@ class SAT(pl.LightningModule):
         """
         return self.forward(img_tensor, beamk, max_gen_length,temperature, rescore_method, rescore_reward, return_all)
 
+    @torch.no_grad()
     def forward(self, img, beamk=3, max_gen_length=32, temperature=0.5, 
                 rescore_method=None, rescore_reward=0.5, return_all=False):
         """ Inference Method Only. Use beam search to create a caption. """
@@ -253,165 +253,165 @@ class SAT(pl.LightningModule):
         # Create empty return lists, will become the length of the batch
         captions, cap_scores, cap_alphas, cap_perplexity = [], [], [], []
 
-        with torch.no_grad():
-            # Encode the batch
-            annotations = self.encoder(img)
+        # Encode the batch
+        annotations = self.encoder(img)
 
-            # Loop over the batch on image at a time
-            for idx in range(img.shape[0]):
+        # Loop over the batch on image at a time
+        for idx in range(img.shape[0]):
 
-                beamk = beamk_arg  # Reset to beamk args
+            beamk = beamk_arg  # Reset to beamk args
 
-                # Treat each image as a batch of beamk size
-                annots = annotations[idx, :]  # (attention_dim, encoder_dim))
-                annots = annots.expand(beamk, *annots.shape)  # (beamk, attention_dim, encoder_dim)
+            # Treat each image as a batch of beamk size
+            annots = annotations[idx, :]  # (attention_dim, encoder_dim))
+            annots = annots.expand(beamk, *annots.shape)  # (beamk, attention_dim, encoder_dim)
 
-                # Init the beam batch
-                h, c = self.init_lstm(annots)  # (beamk, decoder_dim)
+            # Init the beam batch
+            h, c = self.init_lstm(annots)  # (beamk, decoder_dim)
 
-                # Keep top econded sequences
-                # top_preds.shape = (step, beamk)
-                top_preds = torch.LongTensor([[self.hparams.vocab_stoi["<START>"]]*beamk]).to(self.device)
+            # Keep top econded sequences
+            # top_preds.shape = (step, beamk)
+            top_preds = torch.LongTensor([[self.stoi("<START>")]*beamk]).to(self.device)
 
-                # Keep the -1/log sum
-                # top_scores.shape = (beamk)
-                top_scores = torch.zeros(beamk, dtype=torch.float).to(self.device)
+            # Keep the -1/log sum
+            # top_scores.shape = (beamk)
+            top_scores = torch.zeros(beamk, dtype=torch.float).to(self.device)
 
-                # Keep the alphas for visualization
-                # alphas.shape = (step, beamk, attention_dim)
-                alphas = torch.zeros(1, beamk, self.hparams.attention_dim).to(self.device)
+            # Keep the alphas for visualization
+            # alphas.shape = (step, beamk, attention_dim)
+            alphas = torch.zeros(1, beamk, self.hparams.attention_dim).to(self.device)
 
-                # Extend these lists once the <END> is predicted or max_gen_length is reached
-                finished_captions = []
-                finished_alphas = []
-                finished_scores = []
-                finished_perplexity  = []
+            # Extend these lists once the <END> is predicted or max_gen_length is reached
+            finished_captions = []
+            finished_alphas = []
+            finished_scores = []
+            finished_perplexity  = []
 
-                step = 0
-                while True:
-                    # Get the current sampling temperature
-                    current_temperature = temperature[step % len(temperature)]
+            step = 0
+            while True:
+                # Get the current sampling temperature
+                current_temperature = temperature[step % len(temperature)]
 
-                    # Get the last predictions
-                    k_prev_words = top_preds[step]
+                # Get the last predictions
+                k_prev_words = top_preds[step]
 
-                    # Forward pass through the model
-                    embed_prev_words = self.embedding(k_prev_words)
-                    zt, alpha = self.attention(annots, h[-1])
-                    beta = torch.sigmoid(self.beta(h[-1]))
-                    h_in = torch.cat([embed_prev_words, beta*zt], dim=1).unsqueeze(0)
-                    _, (h, c) = self.lstm(h_in, (h, c))
-                    logit = self.deep_output(embed_prev_words, h[-1], zt)
+                # Forward pass through the model
+                embed_prev_words = self.embedding(k_prev_words)
+                zt, alpha = self.attention(annots, h[-1])
+                beta = torch.sigmoid(self.beta(h[-1]))
+                h_in = torch.cat([embed_prev_words, beta*zt], dim=1).unsqueeze(0)
+                _, (h, c) = self.lstm(h_in, (h, c))
+                logit = self.deep_output(embed_prev_words, h[-1], zt)
 
-                    # Use the log probability as the score
-                    scores = F.log_softmax(logit/current_temperature, dim=1)
-                    
-                    # TODO : mask the <START> and <PAD> token, right?
-                    scores[:, [self.stoi("<START>"), self.stoi("<PAD>")]] = float('-inf')
+                # Use the log probability as the score
+                scores = F.log_softmax(logit/current_temperature, dim=1)
+                
+                # TODO : mask the <START> and <PAD> token, right?
+                scores[:, [self.stoi("<START>"), self.stoi("<PAD>")]] = float('-inf')
 
-                    if step==0:
-                        # Additionally mask the <END> on the first step
-                        scores[:, self.stoi("<END>")]= float('-inf')
-                        # Extract the top beamk words for the first image since
-                        # the initial predicitons are all the same across the beam batch
-                        top_scores, pred_idx = torch.topk(scores[0], beamk)
-                        # Extend each top sequence with the top predictions
-                        top_preds = torch.cat([top_preds, pred_idx.unsqueeze(0)], 0)
-                        # Extend the alphas
-                        alphas = torch.cat([alphas, alpha.unsqueeze(0)], 0)
-                    else:
-                        # Compute the scores for all possible next words
-                        scores = scores + top_scores.unsqueeze(1)
-
-                        # Flatten the scores so all scores are in dim=0
-                        scores = scores.reshape(-1)
-                        probs, pred_idx = torch.topk(scores, beamk, dim=0)
-                        
-                        # This is the index of which sequence in the beam batch with the top beamk scores
-                        # Need this to select which sequence to cat the word and to sum the score
-                        keep_idxs = pred_idx//self.hparams.vocab_size
-
-                        # Update the top_scores by taking the top beamk scores
-                        top_scores = scores[pred_idx]
-
-                        # Update the sequences by taking the top beamk scores and cat the word indexes
-                        # top_preds[:,keep_idxs] = take every timestep for the top beamk scores
-                        # pred_idx%self.hparams.vocab_size = vocab_size index rather than the flattened beam batch index
-                        top_preds = torch.cat([top_preds[:,keep_idxs], (pred_idx%self.hparams.vocab_size).unsqueeze(0)], 0)
-                        alphas = torch.cat([alphas[:,keep_idxs], alpha.unsqueeze(0)[:,keep_idxs]], 0)
- 
-                        # Update other variables for the selected top beamk scores
-                        h, c = h[:, keep_idxs], c[:, keep_idxs]
-                        annots = annots[keep_idxs]
-                    
-                    # Now the top_preds,top_scores,alphas,h,c,annots are updated with the latest sequences
-                    # Check if any of the sequences predicted the <END> token and remove them
-                    complete = top_preds[step+1]==self.stoi("<END>")
-
-                    def rescore(s, method, reward):
-                        if method=="LN":
-                            # Length Normalization
-                            return s/step
-                        if method=="WR":                        
-                            # Word Reward
-                            return s + reward*step
-                        if method=="BAR":
-                            # Bounded Adaptive-Reward - https://www.aclweb.org/anthology/D18-1342.pdf Sec 4.2.2
-                            average_beam_prob = -torch.mean(top_scores)
-                            return s + reward*average_beam_prob
-                        # No rescoring
-                        return s
-
-                    if any(complete):
-                        # Slice the sequence by complete and take everything except the <START> and <END> token 
-                        finished_captions.extend([top_preds[:,complete][:,i][1:-1].tolist() for i in range(top_preds[:,complete].shape[1])])
-                        finished_alphas.extend([alphas[:,complete][:,i][1:-1].cpu() for i in range(alphas[:,complete].shape[1])])
-                        # Get the scores divide by the length
-                        finished_scores.extend([rescore(top_scores[complete][i], rescore_method, rescore_reward).tolist() for i in range(top_scores[complete].shape[0])])
-                        finished_perplexity.extend([torch.exp(-top_scores[complete][i]/step).tolist() for i in range(top_scores[complete].shape[0])])
-
-                        # Reduce the beam batch to only the incomplete sequences
-                        incomplete = torch.logical_not(complete)
-                        top_preds = top_preds[:,incomplete]
-                        alphas = alphas[:,incomplete]
-                        top_scores = top_scores[incomplete]
-                        h, c = h[:, incomplete], c[:, incomplete]
-                        annots = annots[incomplete]
-
-                        # Update the beamk value
-                        beamk = sum(incomplete)
-
-                        if beamk==0: break  # Leave once all sequence end
-
-                    # Add the incomplete sequences to the output
-                    if step >= max_gen_length:
-                        finished_captions.extend([top_preds[:,i][1:-1].tolist() for i in range(top_preds.shape[1])])
-                        finished_alphas.extend([alphas[:,i][1:-1].cpu() for i in range(alphas.shape[1])])
-                        finished_scores.extend([rescore(top_scores[i], rescore_method, rescore_reward).tolist() for i in range(top_scores.shape[0])])
-                        finished_perplexity.extend([torch.exp(-top_scores[i]/step).tolist() for i in range(top_scores.shape[0])])                        
-                        break
-
-                    step += 1  # All updates are complete, iterate the step count
-
-                # End of beam search
-
-                if return_all:
-                    # Sort by scores before returning
-                    score_index = [[finished_scores[i], i] for i in range(len(finished_scores))]
-                    score_index.sort(reverse=True)
-                    score_index = [x[1] for x in score_index]
-                    captions.append([finished_captions[i] for i in score_index])
-                    cap_alphas.append([finished_alphas[i] for i in score_index])
-                    cap_scores.append([finished_scores[i] for i in score_index])
-                    cap_perplexity.append([finished_perplexity[i] for i in score_index])         
+                if step==0:
+                    # Additionally mask the <END> on the first step
+                    scores[:, self.stoi("<END>")]= float('-inf')
+                    # Extract the top beamk words for the first image since
+                    # the initial predicitons are all the same across the beam batch
+                    top_scores, pred_idx = torch.topk(scores[0], beamk)
+                    # Extend each top sequence with the top predictions
+                    top_preds = torch.cat([top_preds, pred_idx.unsqueeze(0)], 0)
+                    # Extend the alphas
+                    alphas = torch.cat([alphas, alpha.unsqueeze(0)], 0)
                 else:
-                    best_idx = finished_scores.index(max(finished_scores))
-                    captions.append(finished_captions[best_idx])
-                    cap_alphas.append(finished_alphas[best_idx])
-                    cap_scores.append(finished_scores[best_idx])
-                    cap_perplexity.append(finished_perplexity[best_idx])
+                    # Compute the scores for all possible next words
+                    scores = scores + top_scores.unsqueeze(1)
 
-            # End of the img batch loop
+                    # Flatten the scores so all scores are in dim=0
+                    scores = scores.reshape(-1)
+                    probs, pred_idx = torch.topk(scores, beamk, dim=0)
+                    
+                    # This is the index of which sequence in the beam batch with the top beamk scores
+                    # Need this to select which sequence to cat the word and to sum the score
+                    keep_idxs = pred_idx//self.hparams.vocab_size
+
+                    # Update the top_scores by taking the top beamk scores
+                    top_scores = scores[pred_idx]
+
+                    # Update the sequences by taking the top beamk scores and cat the word indexes
+                    # top_preds[:,keep_idxs] = take every timestep for the top beamk scores
+                    # pred_idx%self.hparams.vocab_size = vocab_size index rather than the flattened beam batch index
+                    top_preds = torch.cat([top_preds[:,keep_idxs], (pred_idx%self.hparams.vocab_size).unsqueeze(0)], 0)
+                    alphas = torch.cat([alphas[:,keep_idxs], alpha.unsqueeze(0)[:,keep_idxs]], 0)
+
+                    # Update other variables for the selected top beamk scores
+                    h, c = h[:, keep_idxs], c[:, keep_idxs]
+                    annots = annots[keep_idxs]
+                
+                # Now the top_preds,top_scores,alphas,h,c,annots are updated with the latest sequences
+                # Check if any of the sequences predicted the <END> token and remove them
+                complete = top_preds[step+1]==self.stoi("<END>")
+
+                def rescore(s, method, reward):
+                    if method=="LN":
+                        # Length Normalization
+                        return s/step
+                    if method=="WR":                        
+                        # Word Reward
+                        return s + reward*step
+                    if method=="BAR":
+                        # Bounded Adaptive-Reward - https://www.aclweb.org/anthology/D18-1342.pdf Sec 4.2.2
+                        average_beam_prob = -torch.mean(top_scores)
+                        return s + reward*average_beam_prob
+                    # No rescoring
+                    return s
+
+                if any(complete):
+                    # Slice the sequence by complete and take everything except the <START> and <END> token 
+                    finished_captions.extend([top_preds[:,complete][:,i][1:-1].tolist() for i in range(top_preds[:,complete].shape[1])])
+                    finished_alphas.extend([alphas[:,complete][:,i][1:-1].cpu() for i in range(alphas[:,complete].shape[1])])
+                    # Get the scores divide by the length
+                    finished_scores.extend([rescore(top_scores[complete][i], rescore_method, rescore_reward).tolist() for i in range(top_scores[complete].shape[0])])
+                    finished_perplexity.extend([torch.exp(-top_scores[complete][i]/step).tolist() for i in range(top_scores[complete].shape[0])])
+
+                    # Reduce the beam batch to only the incomplete sequences
+                    incomplete = torch.logical_not(complete)
+                    top_preds = top_preds[:,incomplete]
+                    alphas = alphas[:,incomplete]
+                    top_scores = top_scores[incomplete]
+                    h, c = h[:, incomplete], c[:, incomplete]
+                    annots = annots[incomplete]
+
+                    # Update the beamk value
+                    beamk = sum(incomplete)
+
+                    if beamk==0: break  # Leave once all sequence end
+
+                # Add the incomplete sequences to the output
+                if step >= max_gen_length:
+                    finished_captions.extend([top_preds[:,i][1:-1].tolist() for i in range(top_preds.shape[1])])
+                    finished_alphas.extend([alphas[:,i][1:-1].cpu() for i in range(alphas.shape[1])])
+                    finished_scores.extend([rescore(top_scores[i], rescore_method, rescore_reward).tolist() for i in range(top_scores.shape[0])])
+                    finished_perplexity.extend([torch.exp(-top_scores[i]/step).tolist() for i in range(top_scores.shape[0])])                        
+                    break
+
+                step += 1  # All updates are complete, iterate the step count
+
+            # End of beam search
+
+            # Append to the output lists
+            if return_all:
+                # Sort by scores before returning
+                score_index = [[finished_scores[i], i] for i in range(len(finished_scores))]
+                score_index.sort(reverse=True)
+                score_index = [x[1] for x in score_index]
+                captions.append([finished_captions[i] for i in score_index])
+                cap_alphas.append([finished_alphas[i] for i in score_index])
+                cap_scores.append([finished_scores[i] for i in score_index])
+                cap_perplexity.append([finished_perplexity[i] for i in score_index])         
+            else:
+                best_idx = finished_scores.index(max(finished_scores))
+                captions.append(finished_captions[best_idx])
+                cap_alphas.append(finished_alphas[best_idx])
+                cap_scores.append(finished_scores[best_idx])
+                cap_perplexity.append(finished_perplexity[best_idx])
+
+        # End of the img batch loop
         
         # Return these lists, which are the length of the batch
         return captions, cap_scores, cap_alphas, cap_perplexity
@@ -452,14 +452,36 @@ class SAT(pl.LightningModule):
             mask_idxs = lengths>step
             if not any(mask_idxs): break  # All the captions are done
 
-            # TODO : teacher forcing schedule
+            # For teacher force, epsilon=1 is forced, epsilon=0 uses predictions
+            # As epsilon goes down, there is less chance of teacher forcing
+            # Epsilon is a tensor bc then I don't have to change tensorboard metric logging code
+            if step==0:
+                # On the fist step get the start tokens everytime
+                epsilon = torch.tensor(1)
+            elif self.hparams.decoder_tf is not None:
+                if self.hparams.decoder_tf=="always":
+                    epsilon = torch.tensor(1)
+                elif self.hparams.decoder_tf=="linear":
+                    # Linearly decays down to final_eps teacher forcing by the final epoch
+                    final_eps = 0.5
+                    epsilon = torch.tensor(1 - (1-final_eps)*self.current_epoch/self.hparams.epochs)
+                elif self.hparams.decoder_tf=="inv_sigmoid":
+                    # Shift the 50% point to b, change the slope with g
+                    b, g = 1.2*self.hparams.epochs, 4.0
+                    epsilon = 1/(1+torch.exp(torch.tensor((g/b)*(self.current_epoch-b))))
+                elif self.hparams.decoder_tf=="exp":
+                    # Exponentially decays down to final_eps teacher forcing by the final epoch
+                    final_eps = 0.5
+                    epsilon = torch.exp(torch.log(torch.tensor(final_eps))/self.hparams.epochs)**self.current_epoch
+            else:
+                epsilon = torch.tensor(0)
 
-            # On the fist step get the start tokens, for step>0 check decoder_tf
-            if step==0 or self.hparams.decoder_tf:
+            # Unifromly sample between [0,1] and compare to epsilon
+            if torch.rand(1) <= epsilon:
                 # Get the actual next word embedding
                 embed_prev_words = self.embedding(encoded_captions[mask_idxs, step])
             else:
-                # Get the argmax of the logits
+                # Get the argmax of the previous logits
                 idxs = torch.argmax(logits[mask_idxs, step-1, :], dim=1)
                 # Get the predicted next word embedding
                 embed_prev_words = self.embedding(idxs)
@@ -500,6 +522,7 @@ class SAT(pl.LightningModule):
         metrics = {
             "loss": loss,
             "accuracy": acc,
+            "epsilon_tf": epsilon.float(),
         }
 
         # Update tensorboard for each train step
@@ -519,7 +542,11 @@ class SAT(pl.LightningModule):
         # Log lr
         lr = self.optimizers().param_groups[0]['lr']
         self.logger.experiment.add_scalar('Learning Rate', lr, global_step=self.current_epoch+1)
-    
+
+        # Step these schedulers every epoch
+        if type(self.scheduler) in [torch.optim.lr_scheduler.MultiStepLR, torch.optim.lr_scheduler.ExponentialLR]:
+            self.scheduler.step()
+
     def score_captions(self, encoded_captions, lengths, captions, perplexities=None):
         # Remove <PAD> <START> <END>
         references = [[c[1:l] for c,l in zip(refs, lengths[i])] for i,refs in enumerate(encoded_captions.tolist())]
@@ -529,7 +556,6 @@ class SAT(pl.LightningModule):
         bleu2 = corpus_bleu(references, captions, weights=(0.5, 0.5, 0, 0))
         bleu3 = corpus_bleu(references, captions, weights=(0.33, 0.33, 0.33, 0))
         bleu4 = corpus_bleu(references, captions, weights=(0.25, 0.25, 0.25, 0.25))
-        gleu = corpus_gleu(references, captions)
 
         # TODO : does this idea work?
         # Average the embedding vectors of the sequences and use
@@ -552,7 +578,6 @@ class SAT(pl.LightningModule):
         # Create metrics dict
         metrics = {
             "bleu1": bleu1, "bleu2": bleu2, "bleu3": bleu3, "bleu4": bleu4,
-            "gleu": gleu,
             "cosine_similarity": cosine_similarity.item()
         }
         if type(perplexities)==list: metrics.update({"perplexity": sum(perplexities)/len(perplexities)})
@@ -577,17 +602,16 @@ class SAT(pl.LightningModule):
                 val = sum(vals) / len(vals)
             except:
                 val = 0
-            self.logger.experiment.add_scalar(key, val, global_step=self.current_epoch+1)
+            if self.current_epoch!=0:  # Don't log pl's "sanity check"
+                self.logger.experiment.add_scalar(key, val, global_step=self.current_epoch+1)
             # Use self.log() for the checkpoint callbacks
             if k==self.hparams.save_monitor: self.log(k, val)
             if k==self.hparams.early_stop_monitor: self.log(k, val)
             if k==self.hparams.plateau_monitor: plateau_val = val  # For plateau scheduler
 
-        # Step scheduler
+        # Step plateau scheduler
         if type(self.scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
             self.scheduler.step(plateau_val)
-        elif type(self.scheduler) in [torch.optim.lr_scheduler.MultiStepLR, torch.optim.lr_scheduler.ExponentialLR]:
-            self.scheduler.step()
 
     def configure_optimizers(self):
 

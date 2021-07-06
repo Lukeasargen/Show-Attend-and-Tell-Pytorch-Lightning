@@ -60,8 +60,8 @@ def get_args():
         help="int. default=512. Dimension of LSTM hidden states.")
     parser.add_argument('--decoder_layers', default=1, type=int,
         help="int. default=1. Number of LSTM layers.")
-    parser.add_argument('--decoder_tf', default=False, action='store_true',
-        help="store_true. use teacher forcing during training.")
+    parser.add_argument('--decoder_tf', default=None, type=str, choices=['always', 'linear', 'inv_sigmoid', 'exp'],
+        help="str. default=None. use always, linear, inv_sigmoid, exp.")
     # General Training Hyperparameters
     parser.add_argument('--batch', default=1, type=int,
         help="int. default=1. batch size.")
@@ -116,8 +116,8 @@ def get_args():
     parser.add_argument('--early_stop_patience', default=6, type=int,
         help="int. default=6. patience epochs for the early stop callback.")
     # Augmentations
-    parser.add_argument('--dropout', default=0.1, type=float,
-        help="float. default=0.1. Dropout is used before intializing the lstm and before projecting to the vocab.")
+    parser.add_argument('--dropout', default=0.0, type=float,
+        help="float. default=0.0. Dropout is used before intializing the lstm and before projecting to the vocab.")
     parser.add_argument('--aug_scale', default=0.8, type=float,
         help="float. default=0.8. lower bound for RandomResizedCrop.")
     # SAT Specific
