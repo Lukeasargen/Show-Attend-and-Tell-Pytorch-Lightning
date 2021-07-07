@@ -1,5 +1,4 @@
 from nltk.translate.bleu_score import corpus_bleu
-import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch import nn
@@ -153,11 +152,10 @@ class DeepOutput(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, prev_embed, hidden, context):
-        # logit.shape = (batch, embed_dim)
         logit = prev_embed + self.hidden(hidden) + self.context(context)
-        # torch.cat([prev_embed, self.hidden(hidden), self.context(context)], dim=1)
-        logit = self.dropout(torch.tanh(logit))
-        return self.output(logit)
+        logit = self.output(self.dropout(torch.tanh(logit)))
+        # logit.shape = (batch, embed_dim)
+        return logit
 
 
 class SAT(pl.LightningModule):
@@ -228,7 +226,7 @@ class SAT(pl.LightningModule):
         # Using str() just in case
         return [self.itos(t) for t in seq if keep_token(t)]
 
-    def caption(self, img_tensor, beamk=3, max_gen_length=32, temperature=0.5, 
+    def caption(self, img_tensor, beamk=3, max_gen_length=32, temperature=1.0, 
                 rescore_method=None, rescore_reward=0.5, return_all=False):
         """ Caption method for better code readability.
             Input img as a batch [B, C, H, W].    
@@ -239,7 +237,7 @@ class SAT(pl.LightningModule):
         return self.forward(img_tensor, beamk, max_gen_length,temperature, rescore_method, rescore_reward, return_all)
 
     @torch.no_grad()
-    def forward(self, img, beamk=3, max_gen_length=32, temperature=0.5, 
+    def forward(self, img, beamk=3, max_gen_length=32, temperature=1.0, 
                 rescore_method=None, rescore_reward=0.5, return_all=False):
         """ Inference Method Only. Use beam search to create a caption. """
         self.eval()  # Freeze all parameters and turn off dropout
@@ -416,8 +414,10 @@ class SAT(pl.LightningModule):
         # Return these lists, which are the length of the batch
         return captions, cap_scores, cap_alphas, cap_perplexity
 
-    def training_step(self, batch, batch_idx):
-        """ Method used only during training. """
+    def train_batch(self, batch, epsilon=0):
+        """ Forward passes a batch to output logits.
+            Set epsilon=1 at validation to tune temperature scaling.
+        """
         # Unpack, pl puts the data on the correct device already
         img, encoded_captions, lengths = batch
 
@@ -449,75 +449,84 @@ class SAT(pl.LightningModule):
         # NOTE : the batch dimension will reduce as the captions are completed
         for step in range(caplen-1):
             # Boolean vector indicating which captions have not ended at this step 
-            mask_idxs = lengths>step
-            if not any(mask_idxs): break  # All the captions are done
+            incomplete_idxs = lengths>step
+            if not any(incomplete_idxs): break  # All the captions are done
 
-            # For teacher force, epsilon=1 is forced, epsilon=0 uses predictions
-            # As epsilon goes down, there is less chance of teacher forcing
-            # Epsilon is a tensor bc then I don't have to change tensorboard metric logging code
-            if step==0:
-                # On the fist step get the start tokens everytime
-                epsilon = torch.tensor(1)
-            elif self.hparams.decoder_tf is not None:
-                if self.hparams.decoder_tf=="always":
-                    epsilon = torch.tensor(1)
-                elif self.hparams.decoder_tf=="linear":
-                    # Linearly decays down to final_eps teacher forcing by the final epoch
-                    final_eps = 0.5
-                    epsilon = torch.tensor(1 - (1-final_eps)*self.current_epoch/self.hparams.epochs)
-                elif self.hparams.decoder_tf=="inv_sigmoid":
-                    # Shift the 50% point to b, change the slope with g
-                    b, g = 1.2*self.hparams.epochs, 4.0
-                    epsilon = 1/(1+torch.exp(torch.tensor((g/b)*(self.current_epoch-b))))
-                elif self.hparams.decoder_tf=="exp":
-                    # Exponentially decays down to final_eps teacher forcing by the final epoch
-                    final_eps = 0.5
-                    epsilon = torch.exp(torch.log(torch.tensor(final_eps))/self.hparams.epochs)**self.current_epoch
-            else:
-                epsilon = torch.tensor(0)
-
-            # Unifromly sample between [0,1] and compare to epsilon
-            if torch.rand(1) <= epsilon:
+            # On the first few steps to start off with a reasonable sequence
+            # then uniformly sample between [0,1] and compare to epsilon
+            if step<=4 or torch.rand(1) <= epsilon:
                 # Get the actual next word embedding
-                embed_prev_words = self.embedding(encoded_captions[mask_idxs, step])
+                embed_prev_words = self.embedding(encoded_captions[incomplete_idxs, step])
             else:
                 # Get the argmax of the previous logits
-                idxs = torch.argmax(logits[mask_idxs, step-1, :], dim=1)
+                idxs = torch.argmax(logits[incomplete_idxs, step-1, :], dim=1)
                 # Get the predicted next word embedding
                 embed_prev_words = self.embedding(idxs)
 
             # Compute the attention context vector from the annotations and the previous hidden state
             # zt.shape, alpha.shape = (batch, encoder_dim)
-            zt, alpha = self.attention(annotations[mask_idxs], h[-1, mask_idxs])            
+            zt, alpha = self.attention(annotations[incomplete_idxs], h[-1, incomplete_idxs])            
             # Save the alpha values
-            alphas[mask_idxs, step, :] = alpha
+            alphas[incomplete_idxs, step, :] = alpha
 
             # Compute the gating scalar beta from the previous hidden state
             # beta.shape = (batch, encoder_dim). Notice this matches zt so we can do the element wise product
-            beta = torch.sigmoid(self.beta(h[-1, mask_idxs].squeeze(1)))  # squeeze to remove the length dim
+            beta = torch.sigmoid(self.beta(h[-1, incomplete_idxs].squeeze(1)))  # squeeze to remove the length dim
 
             # Prepare to enter the lstm with shape (1, batch, embed_dim+enocder_dim)
             h_in = torch.cat([embed_prev_words, beta*zt], dim=1).unsqueeze(0)
 
             # Compute the new hidden states
-            _, (h[:, mask_idxs], c[:, mask_idxs]) = self.lstm(h_in, (h[:, mask_idxs], c[:, mask_idxs]))
+            _, (h[:, incomplete_idxs], c[:, incomplete_idxs]) = self.lstm(h_in, (h[:, incomplete_idxs], c[:, incomplete_idxs]))
 
             # Compute the word logits
-            logit = self.deep_output(embed_prev_words, h[-1, mask_idxs], zt)
-            logits[mask_idxs, step, :] = logit.clone().float()  # clone because float() is an inplace operation
+            logit = self.deep_output(embed_prev_words, h[-1, incomplete_idxs], zt)
+            logits[incomplete_idxs, step, :] = logit.clone().float()  # clone because float() is an inplace operation
 
         # End of the loop
 
-        # Use the logits to compute the word prediction loss
-        logits_packed = pack_padded_sequence(logits, lengths.tolist(), batch_first=True, enforce_sorted=False).data
-        targets_packed = pack_padded_sequence(targets, lengths.tolist(), batch_first=True, enforce_sorted=False).data
+        # Pack the logits and the targets
+        logits_packed = pack_padded_sequence(logits, lengths.tolist(), batch_first=True, enforce_sorted=False)
+        targets_packed = pack_padded_sequence(targets, lengths.tolist(), batch_first=True, enforce_sorted=False)
 
-        loss = F.cross_entropy(logits_packed, targets_packed)
+        # Return all these tensors
+        return logits_packed, targets_packed, alphas
+
+    def training_step(self, batch, batch_idx):
+        """ Method used only during training. """
+
+        # For teacher force, epsilon=1 is forced, epsilon=0 uses predictions
+        # As epsilon goes down, there is less chance of teacher forcing
+        # Epsilon is a tensor bc then I don't have to change tensorboard metric logging code
+        if self.hparams.decoder_tf is not None:
+            if self.hparams.decoder_tf=="always":
+                epsilon = torch.tensor(1)
+            elif self.hparams.decoder_tf=="linear":
+                # Linearly decays down to final_eps teacher forcing by the final epoch
+                final_eps = 0.5
+                epsilon = torch.tensor(1 - (1-final_eps)*self.current_epoch/self.hparams.epochs)
+            elif self.hparams.decoder_tf=="inv_sigmoid":
+                # Shift the 50% point to b, change the slope with g
+                b, g = 1.2*self.hparams.epochs, 5.0
+                epsilon = 1/(1+torch.exp(torch.tensor((g/b)*(self.current_epoch-b))))
+            elif self.hparams.decoder_tf=="exp":
+                # Exponentially decays down to final_eps teacher forcing by the final epoch
+                final_eps = 0.5
+                epsilon = torch.exp(torch.log(torch.tensor(final_eps))/self.hparams.epochs)**self.current_epoch
+        else:
+            epsilon = torch.tensor(0)  # No teacher forcing
+
+        # Forward pass
+        logits_packed, targets_packed, alphas = self.train_batch(batch, epsilon)
+
+        # Loss calculation
+        loss = F.cross_entropy(logits_packed.data, targets_packed.data)
         # Sec 4.2.1 Equation 14 - doubly stochastic loss
         loss += self.hparams.att_gamma*((1-alphas.sum(dim=1))**2).mean()
 
-        pred = torch.argmax(logits_packed, dim=1)
-        acc = torch.sum(pred==targets_packed)/pred.shape[0]
+        pred = torch.argmax(logits_packed.data, dim=1)
+        acc = torch.sum(pred==targets_packed.data)/pred.shape[0]
+
         # Create metrics dict
         metrics = {
             "loss": loss,
@@ -557,7 +566,7 @@ class SAT(pl.LightningModule):
         bleu3 = corpus_bleu(references, captions, weights=(0.33, 0.33, 0.33, 0))
         bleu4 = corpus_bleu(references, captions, weights=(0.25, 0.25, 0.25, 0.25))
 
-        # TODO : does this idea work?
+        # TODO : does this idea work? Check correlation with other metrics in evaluation
         # Average the embedding vectors of the sequences and use
         # the maximum cosine similarity with the references
         cossims = torch.zeros(encoded_captions.shape[0], dtype=torch.float).to(self.device)
@@ -591,7 +600,8 @@ class SAT(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         """ Method used only for validation. """
-        return self.val_batch(batch, beamk=self.hparams.val_beamk, max_gen_length=self.hparams.val_max_len, rescore_method="LN")
+        return self.val_batch(batch, beamk=self.hparams.val_beamk, max_gen_length=self.hparams.val_max_len,
+                            temperature=1.0, rescore_method="LN")
 
     def validation_epoch_end(self, outputs): 
         # Calculate epoch metrics 
