@@ -5,6 +5,12 @@ import torch
 import pytorch_lightning as pl
 from pytorch_lightning.core.memory import ModelSummary
 
+
+# This is to import the get_encoder model without creating a proper module
+import sys
+import pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+
 from model import get_encoder
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
