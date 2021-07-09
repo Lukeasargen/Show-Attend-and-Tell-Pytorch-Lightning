@@ -76,6 +76,8 @@ def get_args():
         help="float. default=1e-5. encoder learning rate")
     parser.add_argument('--decoder_lr', default=4e-3, type=float,
         help="float. default=4e-3. decoder learning rate")
+    parser.add_argument('--embedding_lr', default=1e-2, type=float,
+        help="float. default=1e-2. embedding learning rate")
     parser.add_argument('--lr_warmup_steps', default=0, type=int,
         help="int. deafult=0. linearly increase learning rate for this number of steps.")
     parser.add_argument('--momentum', default=0.9, type=float,

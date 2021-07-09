@@ -666,11 +666,11 @@ class SAT(pl.LightningModule):
         if self.hparams.weight_decay != 0:
             params = add_weight_decay(decoder_modules, self.hparams.weight_decay, self.hparams.decoder_lr)
             # I don't think embeddings use weight_decay because they are normalized
-            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.decoder_lr, 'weight_decay': 0.0}]
+            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr, 'weight_decay': 0.0}]
             params += add_weight_decay([self.encoder], self.hparams.weight_decay, self.hparams.encoder_lr)
         else:
             params = [{'params': m.parameters(), 'lr': self.hparams.decoder_lr} for m in decoder_modules]
-            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.decoder_lr}]
+            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr}]
             params += [{'params': self.encoder.parameters(), 'lr': self.hparams.encoder_lr}]
 
         # NOTE : decoder_lr is provide as the required lr argument
