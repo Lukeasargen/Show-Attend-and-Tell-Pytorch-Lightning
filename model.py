@@ -7,6 +7,8 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from torchvision import models
 from torchvision.transforms import Normalize
 
+from util import LabelSmoothing
+
 
 class FlattenShuffle(nn.Module):
     """ Flatten and Shuffle the encoder output.
@@ -99,7 +101,7 @@ def get_encoder(args):
 
 
 class InitLSTM(nn.Module):
-    """ Sec 3.1.2 "predicted by an avergage of the annotation vectors feed through two separate MLPs" """
+    """ Sec 3.1.2 "predicted by an average of the annotation vectors feed through two separate MLPs" """
     def __init__(self, encoder_dim, decoder_dim, decoder_layers, dropout):
         super(InitLSTM, self).__init__()
         self.decoder_dim = decoder_dim
@@ -110,7 +112,7 @@ class InitLSTM(nn.Module):
 
     def forward(self, annotations):
         # Mean over the locations (dim=1) to get a vector of length encoder_dim
-        mean = annotations.mean(1)
+        mean = self.dropout(annotations.mean(1))
         # shape = (decoder_layers, batch, decoder_dim)
         init_h = self.init_h(mean).reshape(self.decoder_layers, mean.shape[0], self.decoder_dim)
         init_c = self.init_c(mean).reshape(self.decoder_layers, mean.shape[0], self.decoder_dim)
@@ -123,9 +125,9 @@ class SoftAttention(nn.Module):
     """
     def __init__(self, attention_dim, encoder_dim, hidden_dim):
         super(SoftAttention, self).__init__()
-        self.encoder_att = nn.Linear(encoder_dim, attention_dim)
-        self.decoder_att = nn.Linear(hidden_dim, attention_dim)
-        self.f_att = nn.Linear(attention_dim, 1)
+        self.encoder_att = nn.Linear(encoder_dim, attention_dim, bias=False)
+        self.decoder_att = nn.Linear(hidden_dim, attention_dim, bias=False)
+        self.f_att = nn.Linear(attention_dim, 1, bias=False)
 
     def forward(self, annotations, decoder_hidden):
         """ Returns the context and the alpha (for doubly sotchastic loss and visualizations) """
@@ -146,8 +148,8 @@ class DeepOutput(nn.Module):
     """ Sec 3.1.2 Equation 7 - Deep Output Layer """
     def __init__(self, encoder_dim, decoder_dim, embed_dim, vocab_size, dropout):
         super(DeepOutput, self).__init__()
-        self.hidden = nn.Linear(decoder_dim, embed_dim)
-        self.context = nn.Linear(encoder_dim, embed_dim)
+        self.hidden = nn.Linear(decoder_dim, embed_dim, bias=False)
+        self.context = nn.Linear(encoder_dim, embed_dim, bias=False)
         self.output = nn.Linear(embed_dim, vocab_size)
         self.dropout = nn.Dropout(p=dropout)
 
@@ -168,6 +170,11 @@ class SAT(pl.LightningModule):
         super(SAT, self).__init__()
         self.save_hyperparameters()
         self.scheduler = None  # Set in configure_optimizers()
+        self.opt_init_lr = None  # Set in configure_optimizers()
+
+        # Smoothing of 0 is just regular cross entropy
+        assert 0 <= self.hparams.label_smoothing < (self.hparams.vocab_size-1)/self.hparams.vocab_size
+        self.criterion = LabelSmoothing(self.hparams.label_smoothing)
 
         # Keep these, a nice list to have around
         self.special_idxs = [self.stoi("<PAD>"), self.stoi("<START>"), self.stoi("<END>")]
@@ -345,6 +352,7 @@ class SAT(pl.LightningModule):
                 # Check if any of the sequences predicted the <END> token and remove them
                 complete = top_preds[step+1]==self.stoi("<END>")
 
+                # Define this function here so it has access to the step and top_scores variables
                 def rescore(s, method, reward):
                     if method=="LN":
                         # Length Normalization
@@ -495,6 +503,7 @@ class SAT(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         """ Method used only during training. """
 
+        # NOTE : there are hard coded values here
         # For teacher force, epsilon=1 is forced, epsilon=0 uses predictions
         # As epsilon goes down, there is less chance of teacher forcing
         # Epsilon is a tensor bc then I don't have to change tensorboard metric logging code
@@ -520,7 +529,7 @@ class SAT(pl.LightningModule):
         logits_packed, targets_packed, alphas = self.train_batch(batch, epsilon)
 
         # Loss calculation
-        loss = F.cross_entropy(logits_packed.data, targets_packed.data)
+        loss = self.criterion(logits_packed.data, targets_packed.data)
         # Sec 4.2.1 Equation 14 - doubly stochastic loss
         loss += self.hparams.att_gamma*((1-alphas.sum(dim=1))**2).mean()
 
@@ -539,6 +548,17 @@ class SAT(pl.LightningModule):
             key = "{}/train".format(k)
             val = metrics[k].detach().item()
             self.logger.experiment.add_scalar(key, val, global_step=self.global_step)
+
+        # Update the lr during warmup
+        """ Code from https://pytorch-lightning.readthedocs.io/en/latest/common/optimizers.html
+            Except I didn't override optimizer_step() bc that would break gradient accumulation.
+        """
+        if self.trainer.global_step < self.hparams.lr_warmup_steps:
+            opt = self.optimizers()
+            lr_scale = min(1, float(self.trainer.global_step+1)/self.hparams.lr_warmup_steps)
+            for pg, init_lr in zip(opt.param_groups, self.opt_init_lr):
+                pg['lr'] = lr_scale*init_lr
+
         return metrics
 
     def training_epoch_end(self, outputs):
@@ -548,7 +568,7 @@ class SAT(pl.LightningModule):
             val = torch.stack([x[k] for x in outputs]).mean().detach().item()
             self.logger.experiment.add_scalar(key, val, global_step=self.current_epoch+1)
 
-        # Log lr
+        # Log lr, group 0 is a decoder module
         lr = self.optimizers().param_groups[0]['lr']
         self.logger.experiment.add_scalar('Learning Rate', lr, global_step=self.current_epoch+1)
 
@@ -642,12 +662,12 @@ class SAT(pl.LightningModule):
         decoder_modules = [self.init_lstm, self.lstm, self.attention, self.beta, self.deep_output]
         if self.hparams.weight_decay != 0:
             params = add_weight_decay(decoder_modules, self.hparams.weight_decay, self.hparams.decoder_lr)
-            # I don't think embeddings use weight_decay
-            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.decoder_lr}]
+            # I don't think embeddings use weight_decay because they are normalized
+            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.decoder_lr, 'weight_decay': 0.0}]
             params += add_weight_decay([self.encoder], self.hparams.weight_decay, self.hparams.encoder_lr)
         else:
-            params = [{'params': self.embedding.parameters(), 'lr': self.hparams.decoder_lr}]
-            params += [{'params': m.parameters(), 'lr': self.hparams.decoder_lr} for m in decoder_modules]
+            params = [{'params': m.parameters(), 'lr': self.hparams.decoder_lr} for m in decoder_modules]
+            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.decoder_lr}]
             params += [{'params': self.encoder.parameters(), 'lr': self.hparams.encoder_lr}]
 
         # NOTE : decoder_lr is provide as the required lr argument
@@ -664,5 +684,8 @@ class SAT(pl.LightningModule):
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=self.hparams.lr_gamma, patience=self.hparams.plateau_patience)
         elif self.hparams.scheduler == 'exp':
             self.scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=self.hparams.lr_gamma)
+
+        # Keep a copy of the initial lr for each group because this will get overwritten during warmup steps
+        self.opt_init_lr = [pg['lr'] for pg in optimizer.param_groups]
 
         return optimizer

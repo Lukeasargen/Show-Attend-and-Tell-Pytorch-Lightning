@@ -17,7 +17,7 @@ from util import CocoCaptionDataset, BucketSampler, AddGaussianNoise
 def get_args():
     parser = argparse.ArgumentParser()
     # Early Stop, Mdodel Checkpointing, Plateau Scheduler can use these metrics
-    metric_choices = ["chrf", "bleu1", "bleu2", "bleu3", "bleu4", "gleu", "precision", "recall"]
+    metric_choices = [ "bleu1", "bleu2", "bleu3", "bleu4"]
     # Init and setup
     parser.add_argument('--seed', default=42, type=int,
         help="int. default=42. deterministic seed. cudnn.deterministic is always set True by deafult.")
@@ -76,6 +76,8 @@ def get_args():
         help="float. default=1e-5. encoder learning rate")
     parser.add_argument('--decoder_lr', default=4e-3, type=float,
         help="float. default=4e-3. decoder learning rate")
+    parser.add_argument('--lr_warmup_steps', default=0, type=int,
+        help="int. deafult=0. linearly increase learning rate for this number of steps.")
     parser.add_argument('--momentum', default=0.9, type=float,
         help="float. default=0.9. sgd momentum value.")
     parser.add_argument('--nesterov', default=False, action='store_true',
@@ -115,11 +117,13 @@ def get_args():
         help="str. default=None. which metric to use for early stop callback.")
     parser.add_argument('--early_stop_patience', default=6, type=int,
         help="int. default=6. patience epochs for the early stop callback.")
-    # Augmentations
+    # Misc
     parser.add_argument('--dropout', default=0.0, type=float,
         help="float. default=0.0. Dropout is used before intializing the lstm and before projecting to the vocab.")
     parser.add_argument('--aug_scale', default=0.8, type=float,
         help="float. default=0.8. lower bound for RandomResizedCrop.")
+    parser.add_argument('--label_smoothing', default=0.0, type=float,
+        help="float. default=0. label smoothing epsilon value.")
     # SAT Specific
     parser.add_argument('--att_gamma', default=1.0, type=float,
         help="float. default=1.0. Weight multiplied to the doubly stochastic loss")
@@ -163,14 +167,13 @@ def main(args):
     ])
     train_transforms = T.Compose([
         T.RandomResizedCrop(args.input_size, scale=(args.aug_scale, 1.0)),
-        T.RandomChoice([
-            T.RandomPerspective(distortion_scale=0.2, p=1),
-            T.RandomAffine(degrees=10, shear=10),
-            T.RandomRotation(degrees=10)
-        ]),
+        # T.RandomChoice([
+        #     T.RandomPerspective(distortion_scale=0.2, p=1),
+        #     T.RandomAffine(degrees=10, shear=10),
+        #     T.RandomRotation(degrees=10)
+        # ]),
         T.ColorJitter(brightness=0.16, contrast=0.15, saturation=0.5, hue=0.04),
         T.RandomHorizontalFlip(),
-        T.RandomGrayscale(),
         T.ToTensor(),
         AddGaussianNoise(std=0.01)
     ])
