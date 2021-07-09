@@ -1,4 +1,5 @@
 from nltk.translate.bleu_score import corpus_bleu
+from nltk.translate.gleu_score import corpus_gleu
 import numpy as np
 
 
@@ -80,3 +81,5 @@ for w in weights:
 
 
 
+gleu = corpus_gleu(references, captions)
+print(f"{gleu = }")

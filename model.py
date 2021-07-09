@@ -1,4 +1,5 @@
 from nltk.translate.bleu_score import corpus_bleu
+from nltk.translate.gleu_score import corpus_gleu
 import pytorch_lightning as pl
 import torch
 from torch import nn
@@ -585,6 +586,7 @@ class SAT(pl.LightningModule):
         bleu2 = corpus_bleu(references, captions, weights=(0.5, 0.5, 0, 0))
         bleu3 = corpus_bleu(references, captions, weights=(0.33, 0.33, 0.33, 0))
         bleu4 = corpus_bleu(references, captions, weights=(0.25, 0.25, 0.25, 0.25))
+        gleu = corpus_gleu(references, captions)
 
         # TODO : does this idea work? Check correlation with other metrics in evaluation
         # Average the embedding vectors of the sequences and use
@@ -607,7 +609,8 @@ class SAT(pl.LightningModule):
         # Create metrics dict
         metrics = {
             "bleu1": bleu1, "bleu2": bleu2, "bleu3": bleu3, "bleu4": bleu4,
-            "cosine_similarity": cosine_similarity.item()
+            "cosine_similarity": cosine_similarity.item(),
+            "gleu": gleu,
         }
         if type(perplexities)==list: metrics.update({"perplexity": sum(perplexities)/len(perplexities)})
         return metrics
