@@ -10,7 +10,7 @@ from util import CocoCaptionDataset
 
 
 def main():
-    checkpoint_path = "logs/default/version_49/last.ckpt"
+    checkpoint_path = "logs/default/version_52/last.ckpt"
 
     workers = 0
     batch = 16
@@ -52,7 +52,7 @@ def main():
     targets = torch.cat(targets)
 
     # to() creates a copy, so I detach it to make this a leaf tensor
-    temperature = torch.ones(1).to(device).detach().requires_grad_(True)
+    temperature = (torch.ones(1)*1.5).to(device).detach().requires_grad_(True)
     
     optimizer = torch.optim.SGD([temperature], lr=1e-2, momentum=0.8, nesterov=True)
     for i in range(70):
