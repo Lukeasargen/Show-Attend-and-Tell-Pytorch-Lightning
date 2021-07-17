@@ -147,18 +147,24 @@ class SoftAttention(nn.Module):
 
 class DeepOutput(nn.Module):
     """ Sec 3.1.2 Equation 7 - Deep Output Layer """
-    def __init__(self, encoder_dim, decoder_dim, embed_dim, vocab_size, dropout):
+    def __init__(self, args):
         super(DeepOutput, self).__init__()
-        self.hidden = nn.Linear(decoder_dim, embed_dim, bias=False)
-        self.context = nn.Linear(encoder_dim, embed_dim, bias=False)
-        self.output = nn.Linear(embed_dim, vocab_size)
-        self.dropout = nn.Dropout(p=dropout)
+        self.deep = args.deep_output
+        self.dropout = nn.Dropout(p=args.dropout)
+        if self.deep:
+            self.hidden = nn.Linear(args.decoder_dim, args.embed_dim, bias=False)
+            self.context = nn.Linear(args.encoder_dim, args.embed_dim, bias=False)
+            self.output = nn.Linear(args.embed_dim, args.vocab_size)
+        else:
+            self.output = nn.Linear(args.decoder_dim, args.vocab_size)
 
     def forward(self, prev_embed, hidden, context):
-        logit = prev_embed + self.hidden(hidden) + self.context(context)
-        logit = self.output(self.dropout(torch.tanh(logit)))
-        # logit.shape = (batch, embed_dim)
-        return logit
+        if self.deep:
+            x = prev_embed + self.hidden(hidden) + self.context(context)
+            logit = self.output(self.dropout(torch.tanh(x)))
+        else:
+            logit = self.output(self.dropout(hidden))
+        return logit  # logit.shape = (batch, vocab_size)
 
 
 class SAT(pl.LightningModule):
@@ -219,8 +225,7 @@ class SAT(pl.LightningModule):
         self.beta = nn.Linear(self.hparams.decoder_dim, self.hparams.encoder_dim)
 
         # Sec 3.1.2 - Deep Output for word prediction
-        self.deep_output = DeepOutput(self.hparams.encoder_dim, self.hparams.decoder_dim,
-                                    self.hparams.embed_dim, self.hparams.vocab_size, self.hparams.dropout)
+        self.deep_output = DeepOutput(self.hparams)
 
     def stoi(self, s):
         return int(self.hparams.vocab_stoi.get(s, self.hparams.vocab_stoi['<UNK>']))
