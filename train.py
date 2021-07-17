@@ -83,7 +83,7 @@ def get_args():
     parser.add_argument('--momentum', default=0.9, type=float,
         help="float. default=0.9. sgd momentum value.")
     parser.add_argument('--nesterov', default=False, action='store_true',
-        help="store_true, sgd with nestrov acceleration.")
+        help="store_true. sgd with nestrov acceleration.")
     parser.add_argument('--weight_decay', default=0.0, type=float,
         help="float. default=0.0. weight decay for sgd and adamw. 0=no weight decay.")
     parser.add_argument('--adam_b1', default=0.9, type=float)
@@ -122,11 +122,22 @@ def get_args():
     # Misc
     parser.add_argument('--dropout', default=0.0, type=float,
         help="float. default=0.0. Dropout is used before intializing the lstm and before projecting to the vocab.")
-    parser.add_argument('--aug_scale', default=0.8, type=float,
-        help="float. default=0.8. lower bound for RandomResizedCrop.")
     parser.add_argument('--label_smoothing', default=0.0, type=float,
         help="float. default=0. label smoothing epsilon value.")
+    # Augmentations
+    parser.add_argument('--aug_scale', default=0.8, type=float,
+        help="float. default=0.8. lower bound for RandomResizedCrop.")
+    parser.add_argument('--aug_hflip', default=0.5, type=float,
+        help="float. default=0.5. probability for RandomHorizontalFlip.")
+    parser.add_argument('--aug_color_jitter', default=0.2, type=float,
+        help="float. default=0.2. ColorJitter brightness, contrast, and saturation value.")
+    parser.add_argument('--aug_optical_strength', default=0.0, type=float,
+        help="float. default=0.0. linearly scale the strength of rotation, shearing, and distortion up to 45 degrees.")
+    parser.add_argument('--aug_noise_std', default=0.01, type=float,
+        help="float. default=0.01. add guassian noise to the inputs. <=0.02 is best.")
     # SAT Specific
+    parser.add_argument('--deep_output', default=False, action='store_true',
+        help="store_true. set to use deep output (equation 7), the deafult is to use the last hidden layer.")
     parser.add_argument('--att_gamma', default=1.0, type=float,
         help="float. default=1.0. Weight multiplied to the doubly stochastic loss")
     args = parser.parse_args()
@@ -162,23 +173,29 @@ def main(args):
     print(" * Creating Datasets and Dataloaders...")
 
     # Setup transforms
+    color_jitter = 0.2
     valid_transforms = T.Compose([
         T.Resize(args.input_size),
         T.CenterCrop(args.input_size),
         T.ToTensor(),
     ])
-    train_transforms = T.Compose([
+    basic_transform = [
         T.RandomResizedCrop(args.input_size, scale=(args.aug_scale, 1.0)),
-        # T.RandomChoice([
-        #     T.RandomPerspective(distortion_scale=0.2, p=1),
-        #     T.RandomAffine(degrees=10, shear=10),
-        #     T.RandomRotation(degrees=10)
-        # ]),
-        T.ColorJitter(brightness=0.16, contrast=0.15, saturation=0.5, hue=0.04),
-        T.RandomHorizontalFlip(),
-        T.ToTensor(),
-        AddGaussianNoise(std=0.01)
-    ])
+        T.RandomHorizontalFlip(p=args.aug_hflip),
+        T.ColorJitter(brightness=args.aug_color_jitter, contrast=args.aug_color_jitter, saturation=args.aug_color_jitter, hue=0.03)
+    ]
+    if args.aug_optical_strength!=0.0 and args.aug_optical_strength<=1.0:
+        optical_transform = [
+            T.RandomChoice([
+                T.RandomPerspective(distortion_scale=0.5*args.aug_optical_strength, p=1),
+                T.RandomAffine(degrees=45*args.aug_optical_strength, shear=45*args.aug_optical_strength),
+                T.RandomRotation(degrees=45*args.aug_optical_strength)
+            ])
+        ]
+    else:
+        optical_transform = []
+    tensor_transform = [T.ToTensor(), AddGaussianNoise(std=args.aug_noise_std)]
+    train_transforms = T.Compose([basic_transform+optical_transform+tensor_transform])
 
     train_ds = CocoCaptionDataset(jsonpath=args.json, split="train", transforms=train_transforms)
     valid_ds = CocoCaptionDataset(jsonpath=args.json, split="val", transforms=valid_transforms)
