@@ -125,12 +125,12 @@ def get_args():
     parser.add_argument('--label_smoothing', default=0.0, type=float,
         help="float. default=0. label smoothing epsilon value.")
     # Augmentations
-    parser.add_argument('--aug_scale', default=0.8, type=float,
-        help="float. default=0.8. lower bound for RandomResizedCrop.")
+    parser.add_argument('--aug_scale', default=0.9, type=float,
+        help="float. default=0.9. lower bound for RandomResizedCrop. 1.0 uses CenterCrop")
     parser.add_argument('--aug_hflip', default=0.5, type=float,
         help="float. default=0.5. probability for RandomHorizontalFlip.")
-    parser.add_argument('--aug_color_jitter', default=0.2, type=float,
-        help="float. default=0.2. ColorJitter brightness, contrast, and saturation value.")
+    parser.add_argument('--aug_color_jitter', default=0.0, type=float,
+        help="float. default=0.0. ColorJitter brightness, contrast, and saturation value.")
     parser.add_argument('--aug_optical_strength', default=0.0, type=float,
         help="float. default=0.0. linearly scale the strength of rotation, shearing, and distortion up to 45 degrees.")
     parser.add_argument('--aug_noise_std', default=0.01, type=float,
@@ -173,29 +173,31 @@ def main(args):
     print(" * Creating Datasets and Dataloaders...")
 
     # Setup transforms
-    color_jitter = 0.2
     valid_transforms = T.Compose([
         T.Resize(args.input_size),
         T.CenterCrop(args.input_size),
         T.ToTensor(),
     ])
-    basic_transform = [
-        T.RandomResizedCrop(args.input_size, scale=(args.aug_scale, 1.0)),
-        T.RandomHorizontalFlip(p=args.aug_hflip),
-        T.ColorJitter(brightness=args.aug_color_jitter, contrast=args.aug_color_jitter, saturation=args.aug_color_jitter, hue=0.03)
-    ]
+
+    train_transforms = []
+    if args.aug_scale==1.0:
+        train_transforms += [T.Resize(args.input_size), T.CenterCrop(args.input_size)]
+    elif args.aug_scale>=0 and  args.aug_scale<1.0:
+        train_transforms += [T.RandomResizedCrop(args.input_size, scale=(args.aug_scale, 1.0))]
+    else:
+        raise ValueError("Invalid value for aug_scale. Choose in the range {0,1}.")
+    train_transforms += [T.RandomHorizontalFlip(p=args.aug_hflip)]
+    if args.aug_color_jitter!=0:
+        train_transforms += [T.ColorJitter(brightness=args.aug_color_jitter, contrast=args.aug_color_jitter, saturation=args.aug_color_jitter, hue=0.03)]
     if args.aug_optical_strength!=0.0 and args.aug_optical_strength<=1.0:
-        optical_transform = [
+        train_transforms += [
             T.RandomChoice([
                 T.RandomPerspective(distortion_scale=0.5*args.aug_optical_strength, p=1),
                 T.RandomAffine(degrees=45*args.aug_optical_strength, shear=45*args.aug_optical_strength),
                 T.RandomRotation(degrees=45*args.aug_optical_strength)
-            ])
-        ]
-    else:
-        optical_transform = []
-    tensor_transform = [T.ToTensor(), AddGaussianNoise(std=args.aug_noise_std)]
-    train_transforms = T.Compose([basic_transform+optical_transform+tensor_transform])
+            ])]
+    train_transforms += [T.ToTensor(), AddGaussianNoise(std=args.aug_noise_std)]
+    train_transforms = T.Compose(train_transforms)
 
     train_ds = CocoCaptionDataset(jsonpath=args.json, split="train", transforms=train_transforms)
     valid_ds = CocoCaptionDataset(jsonpath=args.json, split="val", transforms=valid_transforms)
