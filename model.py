@@ -5,6 +5,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence
+from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, ExponentialLR, CosineAnnealingWarmRestarts
 from torchvision import models
 from torchvision.transforms import Normalize
 
@@ -252,7 +253,7 @@ class SAT(pl.LightningModule):
     @torch.no_grad()
     def forward(self, img, beamk=3, max_gen_length=32, temperature=1.0, 
                 rescore_method=None, rescore_reward=0.5, return_all=False):
-        """ Inference Method Only. Use beam search to create a caption. """
+        """ Inference Method Only. Uses beam search to create a caption. """
         self.eval()  # Freeze all parameters and turn off dropout
 
         beamk_arg = beamk  # Keep this arg since beamk get's overwritten
@@ -508,7 +509,6 @@ class SAT(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         """ Method used only during training. """
-
         # NOTE : there are hard coded values here
         # For teacher force, epsilon=1 is forced, epsilon=0 uses predictions
         # As epsilon goes down, there is less chance of teacher forcing
@@ -522,7 +522,7 @@ class SAT(pl.LightningModule):
                 epsilon = torch.tensor(1 - (1-final_eps)*self.current_epoch/self.hparams.epochs)
             elif self.hparams.decoder_tf=="inv_sigmoid":
                 # Shift the 50% point to b, change the slope with g
-                b, g = 1.2*self.hparams.epochs, 5.0
+                b, g = 1.0*self.hparams.epochs, 5.0
                 epsilon = 1/(1+torch.exp(torch.tensor((g/b)*(self.current_epoch-b))))
             elif self.hparams.decoder_tf=="exp":
                 # Exponentially decays down to final_eps teacher forcing by the final epoch
@@ -564,6 +564,10 @@ class SAT(pl.LightningModule):
             lr_scale = min(1, float(self.trainer.global_step+1)/self.hparams.lr_warmup_steps)
             for pg, init_lr in zip(opt.param_groups, self.opt_init_lr):
                 pg['lr'] = lr_scale*init_lr
+        else:
+            # Step these schedulers every epoch after warmup
+            if type(self.scheduler) in [CosineAnnealingWarmRestarts]:
+                self.scheduler.step()
 
         return metrics
 
@@ -579,7 +583,7 @@ class SAT(pl.LightningModule):
         self.logger.experiment.add_scalar('Learning Rate', lr, global_step=self.current_epoch+1)
 
         # Step these schedulers every epoch
-        if type(self.scheduler) in [torch.optim.lr_scheduler.MultiStepLR, torch.optim.lr_scheduler.ExponentialLR]:
+        if type(self.scheduler) in [MultiStepLR, ExponentialLR]:
             self.scheduler.step()
 
     def score_captions(self, encoded_captions, lengths, captions, perplexities=None):
@@ -622,13 +626,15 @@ class SAT(pl.LightningModule):
 
     def val_batch(self, batch, beamk=3, max_gen_length=32, temperature=0.5, rescore_method=None, rescore_reward=0.5):
         img, encoded_captions, lengths = batch  # Unpack
-        captions, scores, alphas, perplexities = self.caption(img, beamk, max_gen_length, temperature, rescore_method, rescore_reward)
+        captions, scores, alphas, perplexities = self.caption(img, beamk, max_gen_length,
+            temperature, rescore_method, rescore_reward, return_all=False)
         metrics = self.score_captions(encoded_captions, lengths, captions, perplexities)
         return metrics
 
     def validation_step(self, batch, batch_idx):
         """ Method used only for validation. """
-        return self.val_batch(batch, beamk=self.hparams.val_beamk, max_gen_length=self.hparams.val_max_len,
+        return self.val_batch(batch, beamk=self.hparams.val_beamk,
+                            max_gen_length=self.hparams.val_max_len,
                             temperature=1.0, rescore_method="LN")
 
     def validation_epoch_end(self, outputs): 
@@ -648,8 +654,9 @@ class SAT(pl.LightningModule):
             if k==self.hparams.plateau_monitor: plateau_val = val  # For plateau scheduler
 
         # Step plateau scheduler
-        if type(self.scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
-            self.scheduler.step(plateau_val)
+        if self.trainer.global_step >= self.hparams.lr_warmup_steps:
+            if type(self.scheduler) in [ReduceLROnPlateau]:
+                self.scheduler.step(plateau_val)
 
     def configure_optimizers(self):
 
@@ -686,14 +693,16 @@ class SAT(pl.LightningModule):
         elif self.hparams.opt == 'adamw':
             optimizer = torch.optim.AdamW(params, lr=self.hparams.decoder_lr, betas=(self.hparams.adam_b1, self.hparams.adam_b2))
 
-        if self.hparams.scheduler == 'step':
-            self.scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.hparams.milestones, gamma=self.hparams.lr_gamma)
-        elif self.hparams.scheduler == 'plateau':
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=self.hparams.lr_gamma, patience=self.hparams.plateau_patience)
-        elif self.hparams.scheduler == 'exp':
-            self.scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=self.hparams.lr_gamma)
-
         # Keep a copy of the initial lr for each group because this will get overwritten during warmup steps
         self.opt_init_lr = [pg['lr'] for pg in optimizer.param_groups]
+
+        if self.hparams.scheduler == 'step':
+            self.scheduler = MultiStepLR(optimizer, milestones=self.hparams.milestones, gamma=self.hparams.lr_gamma)
+        elif self.hparams.scheduler == 'plateau':
+            self.scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=self.hparams.lr_gamma, patience=self.hparams.plateau_patience, min_lr=self.hparams.min_lr)
+        elif self.hparams.scheduler == 'exp':
+            self.scheduler = ExponentialLR(optimizer, gamma=self.hparams.lr_gamma)
+        elif  self.hparams.scheduler == 'cosine':
+            self.scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=int(self.hparams.cosine_iterations), T_mult=int(self.hparams.cosine_multi), eta_min=self.hparams.min_lr)
 
         return optimizer

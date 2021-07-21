@@ -1,28 +1,63 @@
-ENCODER SUMMARIES REDUCED batch=64 with no_grad
-resnet18           features=512.  latency=37.73 ms.  params=11176512. gpu_mem=0.109 GB.
-resnet34           features=512.  latency=57.66 ms.  params=21284672. gpu_mem=0.150 GB.
-resnet50           features=2048. latency=130.14 ms. params=23508032. gpu_mem=0.237 GB.
-resnet101          features=2048. latency=191.98 ms. params=42500160. gpu_mem=0.312 GB.
-resnet152          features=2048. latency=258.62 ms. params=58143808. gpu_mem=0.376 GB.
-resnext50_32x4d    features=2048. latency=158.80 ms. params=22979904. gpu_mem=0.235 GB.
-resnext101_32x8d   features=2048. latency=375.39 ms. params=86742336. gpu_mem=0.494 GB.
-wide_resnet50_2    features=2048. latency=199.48 ms. params=66834240. gpu_mem=0.411 GB.
-wide_resnet101_2   features=2048. latency=318.12 ms. params=124837696. gpu_mem=0.645 GB.
-squeezenet1_0      features=512.  latency=49.51 ms.  params=735424. gpu_mem=0.067 GB.
-squeezenet1_1      features=512.  latency=39.09 ms.  params=722496. gpu_mem=0.067 GB.
-densenet121        features=1024. latency=135.59 ms. params=6953856. gpu_mem=0.118 GB.
-densenet169        features=1664. latency=171.86 ms. params=12484480. gpu_mem=0.173 GB.
-densenet201        features=1920. latency=215.67 ms. params=18092928. gpu_mem=0.208 GB.
-densenet161        features=2208. latency=272.44 ms. params=26472000. gpu_mem=0.257 GB.
-mobilenet_v2       features=1280. latency=57.98 ms.  params=2223872. gpu_mem=0.112 GB.
-mobilenet_v3_large features=960.  latency=43.94 ms.  params=2971952. gpu_mem=0.099 GB.
-mobilenet_v3_small features=576.  latency=20.20 ms.  params=927008. gpu_mem=0.071 GB.
-mnasnet0_5         features=1280. latency=40.54 ms.  params=937512. gpu_mem=0.107 GB.
-mnasnet0_75        features=1280. latency=49.69 ms.  params=1889208. gpu_mem=0.111 GB.
-mnasnet1_0         features=1280. latency=54.55 ms.  params=3102312. gpu_mem=0.115 GB.
-mnasnet1_3         features=1280. latency=66.05 ms.  params=5001256. gpu_mem=0.123 GB.
-shufflenet_v2_x0_5 features=1024. latency=26.69 ms.  params=341792. gpu_mem=0.091 GB.
-shufflenet_v2_x1_0 features=1024. latency=32.18 ms.  params=1253604. gpu_mem=0.095 GB.
-shufflenet_v2_x1_5 features=1024. latency=40.91 ms.  params=2478624. gpu_mem=0.100 GB.
-shufflenet_v2_x2_0 features=2048. latency=65.60 ms.  params=5344996. gpu_mem=0.163 GB.
+ENCODER SUMMARIES
+arch=resnet18           features= 512 params= 11.18M. amp=True  grad=True  Latency=  9.410 ms. batch=  32. Batches/s=106.3. Imgs/s= 3400.6.
+arch=resnet18           features= 512 params= 11.18M. amp=True  grad=False Latency=  9.340 ms. batch=  32. Batches/s=107.1. Imgs/s= 3426.1.
+arch=resnet34           features= 512 params= 21.28M. amp=True  grad=True  Latency= 15.240 ms. batch=  32. Batches/s= 65.6. Imgs/s= 2099.7.
+arch=resnet34           features= 512 params= 21.28M. amp=True  grad=False Latency= 15.190 ms. batch=  32. Batches/s= 65.8. Imgs/s= 2106.6.
+arch=resnet50           features=2048 params= 23.51M. amp=True  grad=True  Latency= 25.330 ms. batch=  32. Batches/s= 39.5. Imgs/s= 1263.3.
+arch=resnet50           features=2048 params= 23.51M. amp=True  grad=False Latency= 25.310 ms. batch=  32. Batches/s= 39.5. Imgs/s= 1264.3.
+arch=resnet101          features=2048 params= 42.50M. amp=True  grad=True  Latency= 41.460 ms. batch=  32. Batches/s= 24.1. Imgs/s=  771.8.
+arch=resnet101          features=2048 params= 42.50M. amp=True  grad=False Latency= 41.480 ms. batch=  32. Batches/s= 24.1. Imgs/s=  771.5.
+arch=resnet152          features=2048 params= 58.14M. amp=True  grad=True  Latency= 58.560 ms. batch=  32. Batches/s= 17.1. Imgs/s=  546.4.
+arch=resnet152          features=2048 params= 58.14M. amp=True  grad=False Latency= 58.520 ms. batch=  32. Batches/s= 17.1. Imgs/s=  546.8.
+arch=resnext50_32x4d    features=2048 params= 22.98M. amp=True  grad=True  Latency= 35.060 ms. batch=  32. Batches/s= 28.5. Imgs/s=  912.7.
+arch=resnext50_32x4d    features=2048 params= 22.98M. amp=True  grad=False Latency= 35.020 ms. batch=  32. Batches/s= 28.6. Imgs/s=  913.8.
+
+arch=wide_resnet50_2    features=2048 params= 66.83M. amp=True  grad=True  Latency= 43.920 ms. batch=  32. Batches/s= 22.8. Imgs/s=  728.6.
+arch=wide_resnet50_2    features=2048 params= 66.83M. amp=True  grad=False Latency= 44.030 ms. batch=  32. Batches/s= 22.7. Imgs/s=  726.8.
+arch=wide_resnet101_2   features=2048 params=124.84M. amp=True  grad=True  Latency= 76.690 ms. batch=  32. Batches/s= 13.0. Imgs/s=  417.3.
+arch=wide_resnet101_2   features=2048 params=124.84M. amp=True  grad=False Latency= 76.610 ms. batch=  32. Batches/s= 13.1. Imgs/s=  417.7.
+arch=squeezenet1_0      features= 512 params=  0.74M. amp=True  grad=True  Latency= 12.570 ms. batch=  32. Batches/s= 79.6. Imgs/s= 2545.8.
+arch=squeezenet1_0      features= 512 params=  0.74M. amp=True  grad=False Latency= 12.420 ms. batch=  32. Batches/s= 80.5. Imgs/s= 2576.5.
+arch=squeezenet1_1      features= 512 params=  0.72M. amp=True  grad=True  Latency=  5.490 ms. batch=  32. Batches/s=182.2. Imgs/s= 5828.8.
+arch=squeezenet1_1      features= 512 params=  0.72M. amp=True  grad=False Latency=  5.480 ms. batch=  32. Batches/s=182.5. Imgs/s= 5839.7.
+arch=densenet121        features=1024 params=  6.95M. amp=True  grad=True  Latency= 38.910 ms. batch=  32. Batches/s= 25.7. Imgs/s=  822.4.
+arch=densenet121        features=1024 params=  6.95M. amp=True  grad=False Latency= 38.990 ms. batch=  32. Batches/s= 25.6. Imgs/s=  820.7.
+arch=densenet169        features=1664 params= 12.48M. amp=True  grad=True  Latency= 47.830 ms. batch=  32. Batches/s= 20.9. Imgs/s=  669.0.
+arch=densenet169        features=1664 params= 12.48M. amp=True  grad=False Latency= 47.310 ms. batch=  32. Batches/s= 21.1. Imgs/s=  676.4.
+
+arch=shufflenet_v2_x0_5 features=1024 params=  0.34M. amp=True  grad=True  Latency= 10.280 ms. batch=  32. Batches/s= 97.3. Imgs/s= 3112.8.
+arch=shufflenet_v2_x0_5 features=1024 params=  0.34M. amp=True  grad=False Latency=  9.030 ms. batch=  32. Batches/s=110.7. Imgs/s= 3543.7.
+arch=shufflenet_v2_x1_0 features=1024 params=  1.25M. amp=True  grad=True  Latency= 10.560 ms. batch=  32. Batches/s= 94.7. Imgs/s= 3030.3.
+arch=shufflenet_v2_x1_0 features=1024 params=  1.25M. amp=True  grad=False Latency=  9.430 ms. batch=  32. Batches/s=106.0. Imgs/s= 3393.4.
+arch=shufflenet_v2_x1_5 features=1024 params=  2.48M. amp=True  grad=True  Latency= 10.590 ms. batch=  32. Batches/s= 94.4. Imgs/s= 3021.7.
+arch=shufflenet_v2_x1_5 features=1024 params=  2.48M. amp=True  grad=False Latency=  9.270 ms. batch=  32. Batches/s=107.9. Imgs/s= 3452.0.
+arch=shufflenet_v2_x2_0 features=2048 params=  5.34M. amp=True  grad=True  Latency= 11.180 ms. batch=  32. Batches/s= 89.4. Imgs/s= 2862.3.
+arch=shufflenet_v2_x2_0 features=2048 params=  5.34M. amp=True  grad=False Latency= 11.190 ms. batch=  32. Batches/s= 89.4. Imgs/s= 2859.7.
+arch=mobilenet_v2       features=1280 params=  2.22M. amp=True  grad=True  Latency= 11.320 ms. batch=  32. Batches/s= 88.3. Imgs/s= 2826.9.
+arch=mobilenet_v2       features=1280 params=  2.22M. amp=True  grad=False Latency= 11.280 ms. batch=  32. Batches/s= 88.7. Imgs/s= 2836.9.
+arch=mobilenet_v3_large features= 960 params=  2.97M. amp=True  grad=True  Latency= 11.340 ms. batch=  32. Batches/s= 88.2. Imgs/s= 2821.8.
+arch=mobilenet_v3_large features= 960 params=  2.97M. amp=True  grad=False Latency= 10.020 ms. batch=  32. Batches/s= 99.8. Imgs/s= 3193.6.
+arch=mobilenet_v3_small features= 576 params=  0.93M. amp=True  grad=True  Latency=  8.800 ms. batch=  32. Batches/s=113.6. Imgs/s= 3636.4.
+arch=mobilenet_v3_small features= 576 params=  0.93M. amp=True  grad=False Latency=  7.450 ms. batch=  32. Batches/s=134.2. Imgs/s= 4295.3.
+arch=mnasnet0_5         features=1280 params=  0.94M. amp=True  grad=True  Latency=  8.670 ms. batch=  32. Batches/s=115.3. Imgs/s= 3690.9.
+arch=mnasnet0_5         features=1280 params=  0.94M. amp=True  grad=False Latency=  8.170 ms. batch=  32. Batches/s=122.4. Imgs/s= 3916.8.
+arch=mnasnet0_75        features=1280 params=  1.89M. amp=True  grad=True  Latency= 10.200 ms. batch=  32. Batches/s= 98.0. Imgs/s= 3137.3.
+arch=mnasnet0_75        features=1280 params=  1.89M. amp=True  grad=False Latency= 10.370 ms. batch=  32. Batches/s= 96.4. Imgs/s= 3085.8.
+arch=mnasnet1_0         features=1280 params=  3.10M. amp=True  grad=True  Latency= 11.250 ms. batch=  32. Batches/s= 88.9. Imgs/s= 2844.4.
+arch=mnasnet1_0         features=1280 params=  3.10M. amp=True  grad=False Latency= 11.210 ms. batch=  32. Batches/s= 89.2. Imgs/s= 2854.6.
+arch=mnasnet1_3         features=1280 params=  5.00M. amp=True  grad=True  Latency= 35.550 ms. batch=  32. Batches/s= 28.1. Imgs/s=  900.1.
+arch=mnasnet1_3         features=1280 params=  5.00M. amp=True  grad=False Latency= 35.130 ms. batch=  32. Batches/s= 28.5. Imgs/s=  910.9.
+
+
+
+
+
+Candidate small models
+arch=squeezenet1_1      features= 512 params=  0.72M. amp=True  grad=True  Latency= 24.170 ms. batch= 128. Batches/s= 41.4. Imgs/s= 5295.8.
+arch=shufflenet_v2_x0_5 features=1024 params=  0.34M. amp=True  grad=True  Latency= 18.730 ms. batch= 128. Batches/s= 53.4. Imgs/s= 6834.0.
+arch=shufflenet_v2_x1_0 features=1024 params=  1.25M. amp=True  grad=True  Latency= 21.430 ms. batch= 128. Batches/s= 46.7. Imgs/s= 5972.9.
+arch=mobilenet_v3_small features= 576 params=  0.93M. amp=True  grad=True  Latency= 21.110 ms. batch= 128. Batches/s= 47.4. Imgs/s= 6063.5.
+arch=mnasnet0_5         features=1280 params=  0.94M. amp=True  grad=True  Latency= 39.000 ms. batch= 128. Batches/s= 25.6. Imgs/s= 3282.1.
+
+
 

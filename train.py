@@ -92,9 +92,11 @@ def get_args():
         help="str. default=value. pl uses clip_grad_value_ and clip_grad_norm_ from nn.utils.")
     parser.add_argument('--clip_value', default=0, type=float,
         help="float. default=0 is no clipping.")
+    parser.add_argument('--min_lr', default=0.0, type=float,
+        help="float. default=0.0. minimum learning rate.")
     # Scheduler
-    parser.add_argument('--scheduler', default=None, type=str, choices=['step', 'plateau', 'exp'],
-        help="str. default=None. use step, plateau, or exp schedulers.")
+    parser.add_argument('--scheduler', default=None, type=str, choices=['step', 'plateau', 'exp', 'cosine'],
+        help="str. default=None. use step, plateau, exp, or cosine schedulers.")
     parser.add_argument('--lr_gamma', default=0.1, type=float,
         help="float. default=0.1. gamma for schedulers that scale the learning rate.")
     parser.add_argument('--milestones', nargs='+', default=[10, 15], type=int,
@@ -103,6 +105,10 @@ def get_args():
         help="int. plateau scheduler patience. monitoring the train loss.")
     parser.add_argument('--plateau_monitor', default='bleu4', type=str, choices=metric_choices,
         help="str. default=bleu4. which metric to drop the lr.")
+    parser.add_argument('--cosine_iterations', default=1e3, type=float,
+        help="float. default=1e3. number of iterations for the first restart.")
+    parser.add_argument('--cosine_multi', default=1, type=int,
+        help="int. default=1. multiply factor increases iterations after a restart.")
     # Validation
     parser.add_argument('--val_interval', default=5, type=int,
         help="int. default=5. check validation every val_interval epochs. assigned to pl's check_val_every_n_epoch.")
