@@ -53,20 +53,20 @@ if __name__ == "__main__":
         # "mobilenet_v2",
         # "mobilenet_v3_large",
         "mobilenet_v3_small",
-        "mnasnet0_5",
+        # "mnasnet0_5",
         # "mnasnet0_75",
         # "mnasnet1_0",
         # "mnasnet1_3",
     ]
 
+    args.input_size = 224
     batch = 128
     in_channels = 3
-    input_size = 224
     warmup = 5
     n_trials = 100
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    data = torch.rand((batch, in_channels, input_size, input_size)).to(device)
+    data = torch.rand((batch, in_channels, args.input_size, args.input_size)).to(device)
     amp_grad = [
         # (False, True),
         # (False, False),
@@ -97,8 +97,8 @@ if __name__ == "__main__":
             latency = 1e3*duration/n_trials
             batches_per_sec = n_trials/duration
             images_per_sec = data.size(0)*batches_per_sec
-            features = yhat.shape[2]
+            _, attention, features = yhat.shape
 
-            print(f"{arch=:18} {features=:4d} params={params:6.2f}M. amp={str(amp):5} grad={str(grad):5} Latency={latency:7.3f} ms. {batch=:4d}. Batches/s={batches_per_sec:5.1f}. Imgs/s={images_per_sec:7.1f}.")
+            print(f"{arch=:18} {features=:4d} {attention=:3d} params={params:6.2f}M. amp={str(amp):5} grad={str(grad):5} Latency={latency:7.3f} ms. {batch=:4d}. Batches/s={batches_per_sec:5.1f}. Imgs/s={images_per_sec:7.1f}.")
 
         del model

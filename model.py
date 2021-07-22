@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.nn.modules.activation import Sigmoid
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, ExponentialLR, CosineAnnealingWarmRestarts
 from torchvision import models
@@ -38,33 +39,27 @@ def get_encoder(args):
                 param.requires_grad = False
 
         # Get model features before pooling and linear layers
-        # Save final_dim as input to 1x1 conv to transform to encoder_dim features
-        # Save final_size to see if !=args.encoder_size, used in AdaptiveAvgPool2d
-        final_size = 7  # All models use 7, except squeeznets which if set in the if block
         if "resnet" in args.encoder_arch or "resnext" in args.encoder_arch:
             layers = list(m.children())[:-2]  # Remove pooling and fc
-            final_dim = m.fc.in_features
         elif "shufflenet" in args.encoder_arch:
             layers = list(m.children())[:-1]  # Remove fc
-            final_dim = m.fc.in_features
         elif "squeezenet" in args.encoder_arch:
             layers = list(m.children())[:-1]  # Remove classifer
-            final_dim = 512
-            final_size = 13
         elif "densenet" in args.encoder_arch:
             layers = list(m.children())[:-1]  # Remove classifer
-            final_dim = m.classifier.in_features
         elif "mobilenet_v2" in args.encoder_arch:
             layers = list(m.children())[:-1]  # Remove classifer
-            final_dim = m.classifier[1].in_features
         elif "mobilenet_v3" in args.encoder_arch:
             layers = list(m.children())[:-2]  # Remove pooling and classifer
-            final_dim = m.classifier[0].in_features
         elif "mnasnet" in args.encoder_arch:
             layers = list(m.children())[:-1]  # Remove pooling and classifer
-            final_dim = m.classifier[1].in_features
         else:
             raise ValueError("Encoder not supported : {}".format(args.encoder_arch))
+
+        # Pass a fake iamge through the model to see what the annotation dimensions are
+        fake_img = torch.zeros(1, 3, args.input_size, args.input_size)
+        yhat = nn.Sequential(*layers)(fake_img)
+        _, final_dim, final_size, _ = yhat.shape
 
         if args.encoder_dim is not None and args.encoder_dim!=final_dim:
             # This conv forces the number of features to be encoder_dim
@@ -104,12 +99,12 @@ def get_encoder(args):
 
 class InitLSTM(nn.Module):
     """ Sec 3.1.2 "predicted by an average of the annotation vectors feed through two separate MLPs" """
-    def __init__(self, encoder_dim, decoder_dim, decoder_layers, dropout):
+    def __init__(self, encoder_dim, decoder_dim, decoder_layers, dropout, bias=True):
         super(InitLSTM, self).__init__()
         self.decoder_dim = decoder_dim
         self.decoder_layers = decoder_layers
-        self.init_h = nn.Linear(encoder_dim, decoder_dim*decoder_layers)
-        self.init_c = nn.Linear(encoder_dim, decoder_dim*decoder_layers)
+        self.init_h = nn.Linear(encoder_dim, decoder_dim*decoder_layers, bias=bias)
+        self.init_c = nn.Linear(encoder_dim, decoder_dim*decoder_layers, bias=bias)
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, annotations):
@@ -203,7 +198,7 @@ class SAT(pl.LightningModule):
 
         # Sec 3.1.2 - Intialize the hidden states based on the mean annotations and two separate MLPs.
         self.init_lstm = InitLSTM(self.hparams.encoder_dim, self.hparams.decoder_dim,
-                                self.hparams.decoder_layers, self.hparams.dropout)
+                                self.hparams.decoder_layers, self.hparams.dropout, bias=True)
 
         # Sec 3.1.2 Equations 1, 2, 3 - Apply the LSTM update rules.
         # Per the paper, input_size is encoder_dim+embed_dim (D+m) and the hidden_size is decoder_dim (n).
@@ -222,8 +217,11 @@ class SAT(pl.LightningModule):
         )
 
         # Sec 4.2.1 - predict gating scalar \beta from previous hidden state
-        # This is outside of the attention module bc the zt vector is needed for deep output
-        self.beta = nn.Linear(self.hparams.decoder_dim, self.hparams.encoder_dim)
+        # This is outside of the attention module bc the context vector is needed for deep output
+        self.beta = nn.Sequential(
+            nn.Linear(self.hparams.decoder_dim, self.hparams.encoder_dim, bias=True),
+            nn.Sigmoid()
+        )
 
         # Sec 3.1.2 - Deep Output for word prediction
         self.deep_output = DeepOutput(self.hparams)
@@ -240,23 +238,33 @@ class SAT(pl.LightningModule):
         # Using str() just in case
         return [self.itos(t) for t in seq if keep_token(t)]
 
+    @torch.no_grad()
     def caption(self, img_tensor, beamk=3, max_gen_length=32, temperature=1.0, 
-                rescore_method=None, rescore_reward=0.5, return_all=False):
+                rescore_method=None, rescore_reward=0.5,
+                decoder_noise=None, return_all=False):
         """ Caption method for better code readability.
-            Input img as a batch [B, C, H, W].    
-            Output is a list of strings with len()=B.
+            Input : img tensor with shape [B, C, H, W].
+            Output : lists. captions, scores, alphas, and perplexity
+            beamk : beam width
+            max_gen_length :  maximum length
+            temperature : scaling factor before softmax
             rescore_method : None, LN=Length Normalization, WR=Word Reward, BAR=Bounded Adaptive-Reward
             rescore_reward : should be tuned on a dev set
+            decoder_noise : base variance for noise injected to hidden state during decoding
+            return_all : True returns a list of batch size filled with lists of beamk size
         """
-        return self.forward(img_tensor, beamk, max_gen_length,temperature, rescore_method, rescore_reward, return_all)
-
-    @torch.no_grad()
-    def forward(self, img, beamk=3, max_gen_length=32, temperature=1.0, 
-                rescore_method=None, rescore_reward=0.5, return_all=False):
-        """ Inference Method Only. Uses beam search to create a caption. """
         self.eval()  # Freeze all parameters and turn off dropout
+        return self.forward(img_tensor, beamk, max_gen_length, temperature,
+                            rescore_method, rescore_reward,
+                            decoder_noise, return_all)
 
-        beamk_arg = beamk  # Keep this arg since beamk get's overwritten
+    def forward(self, img, beamk=3, max_gen_length=32, temperature=1.0, 
+                rescore_method=None, rescore_reward=0.5,
+                decoder_noise=None, return_all=False):
+        """ Inference Method Only. Uses beam search to create a caption. """
+
+        # Keep this arg since beamk get's overwritten as sequences are completed
+        beamk_arg = beamk
 
         # Makes single values a list so it can be indexed at each step
         if not isinstance(temperature, list):
@@ -309,8 +317,25 @@ class SAT(pl.LightningModule):
                 # Forward pass through the model
                 embed_prev_words = self.embedding(k_prev_words)
                 zt, alpha = self.attention(annots, h[-1])
-                beta = torch.sigmoid(self.beta(h[-1]))
+                beta = self.beta(h[-1])
                 h_in = torch.cat([embed_prev_words, beta*zt], dim=1).unsqueeze(0)
+
+                """ My own idea inspired by "Scheduled Sampling for Sequence Prediction with Recurrent Neural Network"
+                In the paper, it is suggested that exploring the hidden space during
+                training is beneficial.I think it will also be beneficial to explore
+                more during inference decoding to increase generation diversity.
+                To achieve this, I add noise to the hidden state or input.
+                The noise decreases with generation length.
+                The motivation is to start the generation in a different region in
+                the hidden space and then finished the caption using the learned
+                language model. By decreasing the noise, I hope the model will
+                follow the learned language rules to finish the captions in an
+                understandable way.
+                """
+                if decoder_noise is not None:
+                    h_in += torch.randn(h_in.size(), device=h_in.device) * decoder_noise/(step+1)
+                    h += torch.randn(h.size(), device=h.device) * decoder_noise/(step+1)
+
                 _, (h, c) = self.lstm(h_in, (h, c))
                 logit = self.deep_output(embed_prev_words, h[-1], zt)
 
@@ -332,14 +357,19 @@ class SAT(pl.LightningModule):
                     alphas = torch.cat([alphas, alpha.unsqueeze(0)], 0)
                 else:
                     # Compute the scores for all possible next words
+                    # This adds the parent scores along the batch dimension
                     scores = scores + top_scores.unsqueeze(1)
 
                     # Flatten the scores so all scores are in dim=0
                     scores = scores.reshape(-1)
-                    probs, pred_idx = torch.topk(scores, beamk, dim=0)
+
+                    # TODO : diversity sampling methods here, topk is just
+                    # Beam search considers all the scores without regard for parent node
+                    _, pred_idx = torch.topk(scores, beamk, dim=0)
+
+                    # Now the pred_idx represents the hypotheses for this step
                     
-                    # This is the index of which sequence in the beam batch with the top beamk scores
-                    # Need this to select which sequence to cat the word and to sum the score
+                    # Which beam idx to keep
                     keep_idxs = pred_idx//self.hparams.vocab_size
 
                     # Update the top_scores by taking the top beamk scores
@@ -347,7 +377,7 @@ class SAT(pl.LightningModule):
 
                     # Update the sequences by taking the top beamk scores and cat the word indexes
                     # top_preds[:,keep_idxs] = take every timestep for the top beamk scores
-                    # pred_idx%self.hparams.vocab_size = vocab_size index rather than the flattened beam batch index
+                    # pred_idx%self.hparams.vocab_size = vocab_size index
                     top_preds = torch.cat([top_preds[:,keep_idxs], (pred_idx%self.hparams.vocab_size).unsqueeze(0)], 0)
                     alphas = torch.cat([alphas[:,keep_idxs], alpha.unsqueeze(0)[:,keep_idxs]], 0)
 
@@ -486,7 +516,7 @@ class SAT(pl.LightningModule):
 
             # Compute the gating scalar beta from the previous hidden state
             # beta.shape = (batch, encoder_dim). Notice this matches zt so we can do the element wise product
-            beta = torch.sigmoid(self.beta(h[-1, incomplete_idxs].squeeze(1)))  # squeeze to remove the length dim
+            beta = self.beta(h[-1, incomplete_idxs].squeeze(1))  # squeeze to remove the length dim
 
             # Prepare to enter the lstm with shape (1, batch, embed_dim+enocder_dim)
             h_in = torch.cat([embed_prev_words, beta*zt], dim=1).unsqueeze(0)
