@@ -474,7 +474,7 @@ class SAT(pl.LightningModule):
         # since in training this is always size 1, we can remove dim=1 
         encoded_captions = torch.squeeze(encoded_captions, dim=1)
         # Same with lengths, except remove the batch dimension so it is just a 1D vector
-        lengths = torch.squeeze(lengths)
+        lengths = torch.squeeze(lengths, dim=1)
         # Shift the caption to the left to get the targets. The target is the next word
         targets = encoded_captions[:, 1:]
 
