@@ -675,11 +675,11 @@ class SAT(pl.LightningModule):
         return metrics
 
     def val_batch(self, batch, beamk=3, max_gen_length=32, temperature=0.5,
-                rescore_method=None, rescore_reward=0.5,
-                decoder_noise=None):
+                sample_method="beam", decoder_noise=None,
+                rescore_method=None, rescore_reward=0.5):
         img, encoded_captions, lengths = batch  # Unpack
         captions, scores, alphas, perplexities = self.caption(img, beamk, max_gen_length,
-            temperature, rescore_method, rescore_reward, decoder_noise, return_all=False)
+            temperature, sample_method, decoder_noise, rescore_method, rescore_reward, return_all=False)
         metrics = self.score_captions(encoded_captions, lengths, captions, perplexities)
         return metrics
 
