@@ -191,7 +191,8 @@ class SAT(pl.LightningModule):
 
         # Sec 3.1.2 - Matrix E is the embedding matrix of shape (vocab_size, embed_dim).
         self.embedding = nn.Embedding(
-            num_embeddings=self.hparams.vocab_size, embedding_dim=self.hparams.embed_dim,
+            num_embeddings=self.hparams.vocab_size,
+            embedding_dim=self.hparams.embed_dim,
             max_norm=self.hparams.embed_norm,
             padding_idx=self.stoi("<PAD>")
         )
@@ -240,14 +241,16 @@ class SAT(pl.LightningModule):
 
     @torch.no_grad()
     def caption(self, img_tensor, beamk=3, max_gen_length=32, temperature=1.0, 
+                sample_method="beam", decoder_noise=None,
                 rescore_method=None, rescore_reward=0.5,
-                decoder_noise=None, return_all=False):
+                return_all=False):
         """ Caption method for better code readability.
             Input : img tensor with shape [B, C, H, W].
             Output : lists. captions, scores, alphas, and perplexity
             beamk : beam width
             max_gen_length :  maximum length
             temperature : scaling factor before softmax
+            sample_method : beam=Beam Search, m=Multinomial Sampling,
             rescore_method : None, LN=Length Normalization, WR=Word Reward, BAR=Bounded Adaptive-Reward
             rescore_reward : should be tuned on a dev set
             decoder_noise : base variance for noise injected to hidden state during decoding
@@ -255,13 +258,16 @@ class SAT(pl.LightningModule):
         """
         self.eval()  # Freeze all parameters and turn off dropout
         return self.forward(img_tensor, beamk, max_gen_length, temperature,
+                            sample_method, decoder_noise,
                             rescore_method, rescore_reward,
-                            decoder_noise, return_all)
+                            return_all)
 
     def forward(self, img, beamk=3, max_gen_length=32, temperature=1.0, 
+                sample_method="beam", decoder_noise=None,
                 rescore_method=None, rescore_reward=0.5,
-                decoder_noise=None, return_all=False):
+                return_all=False):
         """ Inference Method Only. Uses beam search to create a caption. """
+        assert sample_method in ["beam", "multinomial"]
 
         # Keep this arg since beamk get's overwritten as sequences are completed
         beamk_arg = beamk
@@ -331,9 +337,16 @@ class SAT(pl.LightningModule):
                 language model. By decreasing the noise, I hope the model will
                 follow the learned language rules to finish the captions in an
                 understandable way.
+                I did a quick evalutaion to see where to add the noise.
+                Bleu4 score. decoder_noise=0.1.
+                No Noise : 25.77
+                Noise on Hidden : 25.63 (decoder_noise=0.2 : 25.06)
+                Noise on Input : 23.63
+                Noise on Input and Hidden : 23.28
+                It's apparent that noise on hidden is best to not degrade bleu4 score.
                 """
-                if decoder_noise is not None:
-                    h_in += torch.randn(h_in.size(), device=h_in.device) * decoder_noise/(step+1)
+                if decoder_noise is not None and decoder_noise!=0.0:
+                    # h_in += torch.randn(h_in.size(), device=h_in.device) * decoder_noise/(step+1)
                     h += torch.randn(h.size(), device=h.device) * decoder_noise/(step+1)
 
                 _, (h, c) = self.lstm(h_in, (h, c))
@@ -358,32 +371,39 @@ class SAT(pl.LightningModule):
                 else:
                     # Compute the scores for all possible next words
                     # This adds the parent scores along the batch dimension
-                    scores = scores + top_scores.unsqueeze(1)
+                    seq_scores = scores + top_scores.unsqueeze(1)
 
-                    # Flatten the scores so all scores are in dim=0
-                    scores = scores.reshape(-1)
+                    # The scores are all update. It's time to selected which seq to continue.
+                    # Each method produces pred_idx, which is the hypotheses for this step
+                    # NOTE : don't forget to flatten the scores when selecting the index
+                    if sample_method=="beam":
+                        # Basic beam search considers all the scores without regard for parent node
+                        # Flatten the scores so all scores are in dim=0
+                        _, pred_idx = torch.topk(seq_scores.reshape(-1), beamk, dim=0)
+                    elif sample_method=="multinomial":
+                        # Take the softmax over each sample so the best word for each parent has a high probability
+                        # Multiplying by 20 is like sharpening the probalities, increases the relative logits
+                        score_probs = F.softmax(10*seq_scores/step, dim=1)
+                        pred_idx = torch.multinomial(score_probs.reshape(-1), beamk)
 
-                    # TODO : diversity sampling methods here, topk is just
-                    # Beam search considers all the scores without regard for parent node
-                    _, pred_idx = torch.topk(scores, beamk, dim=0)
+                    # Update the top_scores by taking selected scores on the flatten scores
+                    top_scores = seq_scores.reshape(-1)[pred_idx]
 
-                    # Now the pred_idx represents the hypotheses for this step
-                    
-                    # Which beam idx to keep
-                    keep_idxs = pred_idx//self.hparams.vocab_size
+                    # Which beam idx to keep, // floor divide
+                    keep_seq_idxs = torch.div(pred_idx, self.hparams.vocab_size, rounding_mode='floor')
 
-                    # Update the top_scores by taking the top beamk scores
-                    top_scores = scores[pred_idx]
+                    # Which vocab index to add to the seq, % remainder
+                    # unsequeeze dim=0 so it can stack on top_preds
+                    keep_vocab_idxs = torch.remainder(pred_idx, self.hparams.vocab_size).unsqueeze(0)
 
                     # Update the sequences by taking the top beamk scores and cat the word indexes
-                    # top_preds[:,keep_idxs] = take every timestep for the top beamk scores
-                    # pred_idx%self.hparams.vocab_size = vocab_size index
-                    top_preds = torch.cat([top_preds[:,keep_idxs], (pred_idx%self.hparams.vocab_size).unsqueeze(0)], 0)
-                    alphas = torch.cat([alphas[:,keep_idxs], alpha.unsqueeze(0)[:,keep_idxs]], 0)
+                    # top_preds[:,keep_seq_idxs] = take every timestep for the top beamk scores
+                    top_preds = torch.cat([top_preds[:,keep_seq_idxs], keep_vocab_idxs], 0)
+                    alphas = torch.cat([alphas[:,keep_seq_idxs], alpha.unsqueeze(0)[:,keep_seq_idxs]], 0)
 
                     # Update other variables for the selected top beamk scores
-                    h, c = h[:, keep_idxs], c[:, keep_idxs]
-                    annots = annots[keep_idxs]
+                    h, c = h[:, keep_seq_idxs], c[:, keep_seq_idxs]
+                    annots = annots[keep_seq_idxs]
                 
                 # Now the top_preds,top_scores,alphas,h,c,annots are updated with the latest sequences
                 # Check if any of the sequences predicted the <END> token and remove them
@@ -654,10 +674,12 @@ class SAT(pl.LightningModule):
         if type(perplexities)==list: metrics.update({"perplexity": sum(perplexities)/len(perplexities)})
         return metrics
 
-    def val_batch(self, batch, beamk=3, max_gen_length=32, temperature=0.5, rescore_method=None, rescore_reward=0.5):
+    def val_batch(self, batch, beamk=3, max_gen_length=32, temperature=0.5,
+                rescore_method=None, rescore_reward=0.5,
+                decoder_noise=None):
         img, encoded_captions, lengths = batch  # Unpack
         captions, scores, alphas, perplexities = self.caption(img, beamk, max_gen_length,
-            temperature, rescore_method, rescore_reward, return_all=False)
+            temperature, rescore_method, rescore_reward, decoder_noise, return_all=False)
         metrics = self.score_captions(encoded_captions, lengths, captions, perplexities)
         return metrics
 
@@ -733,6 +755,30 @@ class SAT(pl.LightningModule):
         elif self.hparams.scheduler == 'exp':
             self.scheduler = ExponentialLR(optimizer, gamma=self.hparams.lr_gamma)
         elif  self.hparams.scheduler == 'cosine':
-            self.scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=int(self.hparams.cosine_iterations), T_mult=int(self.hparams.cosine_multi), eta_min=self.hparams.min_lr)
+            # I thought to divide by accumulate, but cosine is stepped every epoch so no need
+            adj_steps = self.hparams.epochs*self.hparams.train_loader_len - self.hparams.lr_warmup_steps
+            t0 = self.hparams.cosine_iterations
+            tm = self.hparams.cosine_multi
+            """ Adjust the t0 to end with a low learning rate
+            Get number of restarts for specified t0 and tm, then update t0
+            Under estimate the number of restarts and over estimate the t0 size
+            Add the accumulate steps just in case of unfortunate rounding
+            """
+            if tm!=1:
+                # Use the sum of geometric sequence solved for n to get the number of restarts
+                # geometric sum = t0*(1-tm**n)/(1-tm)
+                restarts = (torch.log(torch.tensor(1-(adj_steps*(1-tm)/t0)))/torch.log(torch.tensor(tm))).floor()
+                # Divide steps by the geometric sum to get t0
+                if restarts==0.0:
+                    t0 = adj_steps+self.hparams.accumulate
+                else:
+                    t0 = ((adj_steps+self.hparams.accumulate)/((1-tm**restarts)/(1-tm))).ceil()
+            else:
+                restarts = torch.tensor(adj_steps/t0).floor()
+                if restarts==0.0:
+                    t0 = adj_steps+self.hparams.accumulate
+                else:
+                    t0 = ((adj_steps+self.hparams.accumulate)/restarts).ceil()
+            self.scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=int(t0), T_mult=int(tm), eta_min=self.hparams.min_lr)
 
         return optimizer

@@ -193,7 +193,7 @@ def main(args):
     else:
         raise ValueError("Invalid value for aug_scale. Choose in the range {0,1}.")
     train_transforms += [T.RandomHorizontalFlip(p=args.aug_hflip)]
-    if args.aug_color_jitter!=0:
+    if args.aug_color_jitter!=0 and args.aug_color_jitter<=1.0:
         train_transforms += [T.ColorJitter(brightness=args.aug_color_jitter, contrast=args.aug_color_jitter, saturation=args.aug_color_jitter, hue=0.03)]
     if args.aug_optical_strength!=0.0 and args.aug_optical_strength<=1.0:
         train_transforms += [
@@ -223,6 +223,8 @@ def main(args):
             batch_size=args.batch, num_workers=args.workers,
             persistent_workers=(True if args.workers > 0 else False),
             pin_memory=True)
+
+    args.train_loader_len = len(train_loader)
 
     # imgs, caps, lens = next(iter(train_loader))
     # print("imgs:", type(imgs), imgs.device, imgs.dtype, imgs.shape)
