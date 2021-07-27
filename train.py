@@ -17,7 +17,7 @@ from util import CocoCaptionDataset, BucketSampler, AddGaussianNoise
 def get_args():
     parser = argparse.ArgumentParser()
     # Early Stop, Mdodel Checkpointing, Plateau Scheduler can use these metrics
-    metric_choices = [ "bleu1", "bleu2", "bleu3", "bleu4"]
+    metric_choices = ["bleu1", "bleu2", "bleu3", "bleu4", "gleu"]
     # Init and setup
     parser.add_argument('--seed', default=42, type=int,
         help="int. default=42. deterministic seed. cudnn.deterministic is always set True by deafult.")
@@ -96,7 +96,8 @@ def get_args():
     parser.add_argument('--min_lr', default=0.0, type=float,
         help="float. default=0.0. minimum learning rate.")
     # Scheduler
-    parser.add_argument('--scheduler', default=None, type=str, choices=['step', 'plateau', 'exp', 'cosine'],
+    parser.add_argument('--scheduler', default=None, type=str,
+        choices=['step', 'plateau', 'exp', 'cosine', 'one_cycle'],
         help="str. default=None. use step, plateau, exp, or cosine schedulers.")
     parser.add_argument('--lr_gamma', default=0.1, type=float,
         help="float. default=0.1. gamma for schedulers that scale the learning rate.")
@@ -110,6 +111,12 @@ def get_args():
         help="float. default=1e3. number of iterations for the first restart.")
     parser.add_argument('--cosine_multi', default=1, type=int,
         help="int. default=1. multiply factor increases iterations after a restart.")
+    parser.add_argument('--one_cycle_pct', default=0.3, type=float,
+        help="float. default=0.3. percentage of steps increasing the lr.")
+    parser.add_argument('--one_cycle_div', default=25, type=float,
+        help="float. default=25. determines the initial lr.")
+    parser.add_argument('--one_cycle_fdiv', default=1e4, type=float,
+        help="float. default=1e4. determines the minimum lr.")
     # Validation
     parser.add_argument('--val_interval', default=5, type=int,
         help="int. default=5. check validation every val_interval epochs. assigned to pl's check_val_every_n_epoch.")
@@ -193,7 +200,8 @@ def main(args):
         train_transforms += [T.RandomResizedCrop(args.input_size, scale=(args.aug_scale, 1.0))]
     else:
         raise ValueError("Invalid value for aug_scale. Choose in the range {0,1}.")
-    train_transforms += [T.RandomHorizontalFlip(p=args.aug_hflip)]
+    if args.aug_hflip>0 and  args.aug_hflip<1.0:
+        train_transforms += [T.RandomHorizontalFlip(p=args.aug_hflip)]
     if args.aug_color_jitter!=0 and args.aug_color_jitter<=1.0:
         train_transforms += [T.ColorJitter(brightness=args.aug_color_jitter, contrast=args.aug_color_jitter, saturation=args.aug_color_jitter, hue=0.03)]
     if args.aug_optical_strength!=0.0 and args.aug_optical_strength<=1.0:
@@ -222,7 +230,7 @@ def main(args):
             batch_size=args.batch, num_workers=args.workers,
             persistent_workers=(True if args.workers > 0 else False),
             pin_memory=True)
-    val_loader = DataLoader(dataset=valid_ds,
+    val_loader = DataLoader(dataset=valid_ds, shuffle=True,
             batch_size=args.batch, num_workers=args.workers,
             persistent_workers=(True if args.workers > 0 else False),
             pin_memory=True)
@@ -250,6 +258,7 @@ def main(args):
         precision=args.precision,
         progress_bar_refresh_rate=1,
         max_epochs=args.epochs,
+        limit_val_batches=0.2,  # With shuffle=True, validate on 20% of the validation set each time
     )
 
     trainer.fit(

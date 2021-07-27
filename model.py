@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence
-from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, ExponentialLR, CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, ExponentialLR, CosineAnnealingWarmRestarts, OneCycleLR
 from torchvision import models
 from torchvision.transforms import Normalize
 
@@ -242,7 +242,7 @@ class SAT(pl.LightningModule):
         """ Convert a list of int into a list of str. """
         keep_token = lambda x: not (remove_special and x in self.special_idxs)
         # Using str() just in case
-        return [self.itos(t) for t in seq if keep_token(t)]
+        return [str(self.itos(t)) for t in seq if keep_token(t)]
 
     @torch.no_grad()
     def caption(self, img_tensor, beamk=3, max_gen_length=32, temperature=1.0, 
@@ -626,9 +626,9 @@ class SAT(pl.LightningModule):
             lr_scale = min(1, float(self.trainer.global_step+1)/self.hparams.lr_warmup_steps)
             for pg, init_lr in zip(opt.param_groups, self.opt_init_lr):
                 pg['lr'] = lr_scale*init_lr
-        else:
-            # Step these schedulers every epoch after warmup
-            if type(self.scheduler) in [CosineAnnealingWarmRestarts]:
+        elif self.trainer.global_step > 0:
+            # Step these schedulers every batch
+            if type(self.scheduler) in [CosineAnnealingWarmRestarts, OneCycleLR]:
                 self.scheduler.step()
 
         return metrics
@@ -765,12 +765,22 @@ class SAT(pl.LightningModule):
         self.opt_init_lr = [pg['lr'] for pg in optimizer.param_groups]
 
         if self.hparams.scheduler == 'step':
-            self.scheduler = MultiStepLR(optimizer, milestones=self.hparams.milestones, gamma=self.hparams.lr_gamma)
+            self.scheduler = MultiStepLR(
+                optimizer,
+                milestones=self.hparams.milestones,
+                gamma=self.hparams.lr_gamma)
         elif self.hparams.scheduler == 'plateau':
-            self.scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=self.hparams.lr_gamma, patience=self.hparams.plateau_patience, min_lr=self.hparams.min_lr)
+            self.scheduler = ReduceLROnPlateau(
+                optimizer,
+                mode='max',
+                factor=self.hparams.lr_gamma,
+                patience=self.hparams.plateau_patience,
+                min_lr=self.hparams.min_lr)
         elif self.hparams.scheduler == 'exp':
-            self.scheduler = ExponentialLR(optimizer, gamma=self.hparams.lr_gamma)
-        elif  self.hparams.scheduler == 'cosine':
+            self.scheduler = ExponentialLR(
+                optimizer,
+                gamma=self.hparams.lr_gamma)
+        elif self.hparams.scheduler == 'cosine':
             # I thought to divide by accumulate, but cosine is stepped every epoch so no need
             adj_steps = self.hparams.epochs*self.hparams.train_loader_len - self.hparams.lr_warmup_steps
             t0 = self.hparams.cosine_iterations
@@ -795,6 +805,21 @@ class SAT(pl.LightningModule):
                     t0 = adj_steps+self.hparams.accumulate
                 else:
                     t0 = ((adj_steps+self.hparams.accumulate)/restarts).ceil()
-            self.scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=int(t0), T_mult=int(tm), eta_min=self.hparams.min_lr)
+            self.scheduler = CosineAnnealingWarmRestarts(
+                optimizer,
+                T_0=int(t0),
+                T_mult=int(tm),
+                eta_min=self.hparams.min_lr)
+        elif self.hparams.scheduler == 'one_cycle':
+            self.hparams.lr_warmup_steps = 0  # Set this to zero
+            self.scheduler = OneCycleLR(
+                optimizer,
+                self.opt_init_lr,
+                epochs=self.hparams.epochs,
+                steps_per_epoch=self.hparams.train_loader_len,
+                pct_start=self.hparams.one_cycle_pct,
+                cycle_momentum=False,
+                div_factor=self.hparams.one_cycle_div,
+                final_div_factor=self.hparams.one_cycle_fdiv)           
 
         return optimizer
