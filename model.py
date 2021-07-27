@@ -1,10 +1,10 @@
 from nltk.translate.bleu_score import corpus_bleu
 from nltk.translate.gleu_score import corpus_gleu
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch.nn.modules.activation import Sigmoid
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, ExponentialLR, CosineAnnealingWarmRestarts
 from torchvision import models
@@ -34,7 +34,7 @@ def get_encoder(args):
         m = models.__dict__[args.encoder_arch](pretrained=args.pretrained)
 
         # Only freeze the weights if the model is pretrained and no fine tuning
-        if args.pretrained and not args.encoder_finetune:
+        if args.pretrained and args.encoder_finetune_after<0:
             for param in m.parameters():
                 param.requires_grad = False
 
@@ -165,7 +165,7 @@ class DeepOutput(nn.Module):
 
 class SAT(pl.LightningModule):
     """ Shot, Attend, and Tell (SAT)
-    Notes:
+    Note:
     -all image encoding is done in self.encoder using convolutional networks
     -all text decoding is done in this LightningModule (ie, beam search)
     """
@@ -190,12 +190,17 @@ class SAT(pl.LightningModule):
         self.hparams.attention_dim = self.hparams.encoder_size**2
 
         # Sec 3.1.2 - Matrix E is the embedding matrix of shape (vocab_size, embed_dim).
+        # This is initialized randomly and is trainable by default
         self.embedding = nn.Embedding(
             num_embeddings=self.hparams.vocab_size,
             embedding_dim=self.hparams.embed_dim,
             max_norm=self.hparams.embed_norm,
             padding_idx=self.stoi("<PAD>")
         )
+        if self.hparams.pretrained_embedding is not None:
+            # Load the pretrained embedding matrix into the embedding layer
+            embedding_matrix = np.load(self.hparams.pretrained_embedding)
+            self.embedding.weight = nn.Parameter(torch.tensor(embedding_matrix, dtype=torch.float32))
 
         # Sec 3.1.2 - Intialize the hidden states based on the mean annotations and two separate MLPs.
         self.init_lstm = InitLSTM(self.hparams.encoder_dim, self.hparams.decoder_dim,
@@ -282,6 +287,7 @@ class SAT(pl.LightningModule):
         # Encode the batch
         annotations = self.encoder(img)
 
+        # TODO : batch decoding with beam search?
         # Loop over the batch on image at a time
         for idx in range(img.shape[0]):
 
@@ -328,7 +334,7 @@ class SAT(pl.LightningModule):
 
                 """ My own idea inspired by "Scheduled Sampling for Sequence Prediction with Recurrent Neural Network"
                 In the paper, it is suggested that exploring the hidden space during
-                training is beneficial.I think it will also be beneficial to explore
+                training is beneficial. I think it will also be beneficial to explore
                 more during inference decoding to increase generation diversity.
                 To achieve this, I add noise to the hidden state or input.
                 The noise decreases with generation length.
@@ -359,8 +365,8 @@ class SAT(pl.LightningModule):
                 scores[:, [self.stoi("<START>"), self.stoi("<PAD>")]] = float('-inf')
 
                 if step==0:
-                    # Additionally mask the <END> on the first step
-                    scores[:, self.stoi("<END>")]= float('-inf')
+                    # Additionally mask the <END> and <UNK> on the first step
+                    scores[:, [self.stoi("<END>"), self.stoi("<UNK>")]] = float('-inf')
                     # Extract the top beamk words for the first image since
                     # the initial predicitons are all the same across the beam batch
                     top_scores, pred_idx = torch.topk(scores[0], beamk)
@@ -383,7 +389,7 @@ class SAT(pl.LightningModule):
                     elif sample_method=="multinomial":
                         # Take the softmax over each sample so the best word for each parent has a high probability
                         # Multiplying by 20 is like sharpening the probalities, increases the relative logits
-                        score_probs = F.softmax(10*seq_scores/step, dim=1)
+                        score_probs = F.softmax(20*seq_scores/step, dim=1)
                         pred_idx = torch.multinomial(score_probs.reshape(-1), beamk)
 
                     # Update the top_scores by taking selected scores on the flatten scores
@@ -490,6 +496,11 @@ class SAT(pl.LightningModule):
         # annotations.shape = (batch, attention_dim, encoder_dim)
         annotations = self.encoder(img)
 
+        # To avoid fine tuning, detach annotation tesnsor so
+        # there's no gradients back to the encoder
+        if self.global_step < self.hparams.encoder_finetune_after:
+            annotations = annotations.detach()
+
         # The design of my dataset ouputs dim=1 as the number of captions, but
         # since in training this is always size 1, we can remove dim=1 
         encoded_captions = torch.squeeze(encoded_captions, dim=1)
@@ -519,7 +530,8 @@ class SAT(pl.LightningModule):
 
             # On the first few steps to start off with a reasonable sequence
             # then uniformly sample between [0,1] and compare to epsilon
-            if step<=4 or torch.rand(1) <= epsilon:
+            # NOTE : hard coded value
+            if step<=2 or torch.rand(1) <= epsilon:
                 # Get the actual next word embedding
                 embed_prev_words = self.embedding(encoded_captions[incomplete_idxs, step])
             else:
@@ -729,13 +741,17 @@ class SAT(pl.LightningModule):
         decoder_modules = [self.init_lstm, self.lstm, self.attention, self.beta, self.deep_output]
         if self.hparams.weight_decay != 0:
             params = add_weight_decay(decoder_modules, self.hparams.weight_decay, self.hparams.decoder_lr)
-            # I don't think embeddings use weight_decay because they are normalized
-            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr, 'weight_decay': 0.0}]
-            params += add_weight_decay([self.encoder], self.hparams.weight_decay, self.hparams.encoder_lr)
+            if self.hparams.embedding_lr>0:
+                # I don't think embeddings use weight_decay because they are normalized
+                params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr, 'weight_decay': 0.0}]
+            if self.hparams.encoder_finetune_after>0 and self.hparams.encoder_lr>0:
+                params += add_weight_decay([self.encoder], self.hparams.weight_decay, self.hparams.encoder_lr)
         else:
             params = [{'params': m.parameters(), 'lr': self.hparams.decoder_lr} for m in decoder_modules]
-            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr}]
-            params += [{'params': self.encoder.parameters(), 'lr': self.hparams.encoder_lr}]
+            if self.hparams.embedding_lr>0:
+                params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr}]
+            if self.hparams.encoder_finetune_after>0 and self.hparams.encoder_lr>0:
+                params += [{'params': self.encoder.parameters(), 'lr': self.hparams.encoder_lr}]
 
         # NOTE : decoder_lr is provide as the required lr argument
         if self.hparams.opt == 'sgd':

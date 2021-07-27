@@ -46,7 +46,8 @@ def get_args():
     parser.add_argument('--input_size', default=224, type=int,
         help="int. default=224. input size in pixels.")
     parser.add_argument('--pretrained', default=False, action='store_true')
-    parser.add_argument('--encoder_finetune', default=False, action='store_true')
+    parser.add_argument('--encoder_finetune_after', default=-1, type=int,
+        help="int. default=-1 is no finetuning. Start finetuning after this number of steps.")
     parser.add_argument('--encoder_size', default=None, type=int,
         help="int. default=None. Square size of the encoder feature maps. Square this to get L in the paper.")
     parser.add_argument('--encoder_dim', default=None, type=int,
@@ -74,8 +75,8 @@ def get_args():
         help="str. default=adam. use sgd, adam, or adamw.")
     parser.add_argument('--encoder_lr', default=1e-5, type=float,
         help="float. default=1e-5. encoder learning rate")
-    parser.add_argument('--decoder_lr', default=4e-3, type=float,
-        help="float. default=4e-3. decoder learning rate")
+    parser.add_argument('--decoder_lr', default=1e-3, type=float,
+        help="float. default=1e-3. decoder learning rate")
     parser.add_argument('--embedding_lr', default=1e-2, type=float,
         help="float. default=1e-2. embedding learning rate")
     parser.add_argument('--lr_warmup_steps', default=0, type=int,
@@ -212,6 +213,8 @@ def main(args):
     args.vocab_stoi = train_ds.json["vocab_stoi"]
     args.vocab_itos = {v:k for k,v in train_ds.json["vocab_stoi"].items()}
     args.vocab_size = train_ds.json["vocab_size"]
+    args.embed_dim = train_ds.json["embed_dim"] if (train_ds.json["embed_dim"] is not None) else args.embed_dim
+    args.pretrained_embedding = train_ds.json["pretrained_embedding"]
 
     train_loader = DataLoader(dataset=train_ds,
             sampler=(BucketSampler(train_ds.lengths, args.batch) if args.bucket_sampler else None),
