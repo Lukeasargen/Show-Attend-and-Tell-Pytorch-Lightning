@@ -3,17 +3,17 @@ import matplotlib.pyplot as plt
 import torch
 
 
-epochs = 80 #torch.randint(50, 300, (1,))
-len_dataloader = 32 #torch.randint(100, 800, (1,))
-accumulate = 2 # torch.randint(1, 8, (1,))
-warmup = 100 #torch.randint(0, 2000, (1,))
+epochs = 140 #torch.randint(50, 300, (1,))
+len_dataloader = 128 #torch.randint(100, 800, (1,))
+accumulate = 4 # torch.randint(1, 8, (1,))
+warmup = 200 #torch.randint(0, 2000, (1,))
 
 steps = int(epochs*len_dataloader)
 
-lr = 1e-1
-t0 = 1000
+lr = 1e-3
+t0 = 5e4
 tm = 2
-lr_min = 1e-8
+lr_min = 1e-9
 
 print(f"{epochs=} ")
 print(f"{len_dataloader=} ")
@@ -60,9 +60,12 @@ lrs = []
 
 for i in range(steps):
     optimizer.step()
-    lrs.append(optimizer.param_groups[0]["lr"])
     if i > warmup:
+        lrs.append(optimizer.param_groups[0]["lr"])
         scheduler.step()
+    else:
+        lrs.append(lr*i/warmup)
+
 print(f"Last lr={lrs[-1]:e}")
 plt.plot(range(steps), lrs)
 plt.show()

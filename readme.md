@@ -33,7 +33,7 @@ conda activate pytorch
 
 Get pytorch installed. Command generated here: https://pytorch.org/
 ```
-conda install pytorch==1.8.0 torchvision==0.9.0 torchaudio==0.8.0 cudatoolkit=10.2 -c pytorch
+conda install pytorch==1.9.0 torchvision==0.10.0 torchaudio==0.9.0 cudatoolkit=11.1 -c pytorch -c conda-forge
 ```
 
 Requirements
@@ -146,9 +146,9 @@ for step in range(caplen):
 
 # Training
 
-The model is trained end-to-end with F.cross_entropy loss on the word outputs and a doubly stochastic loss (Sec 4.2.1 Equation 14).
+The model is trained end-to-end with label smoothing cross entropy loss on the word outputs and a doubly stochastic loss (Sec 4.2.1 Equation 14).
 ```
-loss = F.cross_entropy(logits_packed, targets_packed)
+loss = LabelSmoothing()(logits_packed, targets_packed)
 loss += self.hparams.att_gamma*((1-alphas.sum(dim=1))**2).mean()
 ```
 
@@ -159,7 +159,7 @@ The pl.Trainer implements these utilities and callbacks:
 - **Validation Interval** - `check_val_every_n_epoch`
 - **Early Stopping** - `callbacks.early_stopping.EarlyStopping`
 - **Model Checkpointing** - `callbacks.model_checkpoint.ModelCheckpoint`
-- **Mixed Precision** - setting `precision=16` uses the native amp in PyTorch 1.6+
+- **Mixed Precision** - setting `precision=16` uses the native amp in PyTorch
 
 
 # Training Methodology
@@ -204,7 +204,7 @@ Reducing the features by fine tuning a randomly initialized 1x1 convolution decr
 
 ## Code improvements for experiments >4: The primary fix was to remove special tokens when computing the bleu score.
 
-The model architecture was also improved to follow the deep output layer (Equation 7) and support a Multilayer LSTM. Adding a second layer did not help this small subset of 32k training samples (Bleu4 dropped from 18.82 from 1 layer to 18.26 for 2 layers). I set the embedding normalization. I made a bucket sampler to feed batches to similar length sequences. Additionally, I did a quick run with the single layer model and increased the attention gamma in the loss from 1 to 2; the bleu4 dropped from 18.82 to 16.41, so a attention gamma of 1 is fine. The final improvement was teacher forcing with scheduling.
+The model architecture was also improved to follow the deep output layer (Equation 7) and support a Multilayer LSTM. Adding a second layer did not help this small subset of 32k training samples (Bleu4 dropped from 18.82 from 1 layer to 18.26 for 2 layers). I set the embedding normalization. I made a bucket sampler to feed batches of similar length sequences. Additionally, I did a quick run with the single layer model and increased the attention gamma in the loss from 1 to 2; the bleu4 dropped from 18.82 to 16.41, so a attention gamma of 1 is fine. The final improvement was teacher forcing with scheduling.
 
 ## Experiment 5 (Teacher Forcing Schedule)
 
@@ -224,7 +224,9 @@ Use v45 as a control because there was no teacher forcing. The first attempts (v
 
 Given how poorly the decoder does without teacher forcing, I did not test the linear and exponential schedules. Linear and exponential drop epsilon much quicker than inverse sigmoid. I think all methods would benefit from more "warm up" steps with always teacher forcing.
 
-## Experiment 6 (Optical Transformations and Finetuning)
+### Results: Use more teacher forcing for longer.
+
+## Experiment 6 (Optical Transformations and Fine Tuning)
 
 - v58: bleu4=23.06, --aug_optical_strength=0.0
 - v60: bleu4=23.87, --aug_optical_strength=0.0 --encoder_finetune
@@ -233,32 +235,95 @@ Given how poorly the decoder does without teacher forcing, I did not test the li
 
 ![experiments_6_bleu4](/data/readme/experiments_6_bleu4.png)
 
-Fine tuning the encoder (v60, v62) is beneficial regardless of the input transformations. Further, with this set of 180k image-caption pairs, the performance with fine tuning was about the same for both transformation strengths. Fine tuning the shufflenet_v2_x0_5 encoder took an average of 32% longer to train.
+Fine tuning the encoder (v60, v62) is beneficial regardless of the input transformations. Further, with this set of 180k image-caption pairs, the performance with fine tuning was about the same for both transformation strengths. Fine tuning the shufflenet_v2_x0_5 encoder took on average 32% longer to train.
 
-# Experiment 7 (Label Smoothing)
+### Results: Fine tune the encoder if possible. Different image augmentations do not substantially change performance when fine tuning.
+
+## Experiment 7 (Label Smoothing)
 
 This experiment is about decoder performance. The encoder is frozen and the input transformations are just horizontal flip, color jitter, and gaussian noise.
 
-- v63: bleu4=22.34, label_smoothing=0.0,
-- v64: bleu4=22.58, label_smoothing=0.05,
-- v65: bleu4=, label_smoothing=0.1,
-- v66: bleu4=, label_smoothing=0.2,
-- v67: bleu4=, label_smoothing=0.4,
-- v68: bleu4=, label_smoothing=0.6,
-- v69: bleu4=, label_smoothing=0.8,
+- v63: bleu4=22.34, label_smoothing=0.0
+- v64: bleu4=22.58, label_smoothing=0.05
+- v65: bleu4=22.74, label_smoothing=0.1
+- v66: bleu4=22.82, label_smoothing=0.2
+- v67: bleu4=23.18, label_smoothing=0.4
+- v68: bleu4=22.68, label_smoothing=0.6
 
 ![experiments_7_bleu4](/data/readme/experiments_7_bleu4.png)
 
+A higher smoothing appears to be beneficial at higher learning rates. This is seen in the bleu4 chart early in training (before step 3k). It also looks like higher smoothing does not level off or decrease score near the end of training, the slope of line is still positive.
+
+### Results: Any label smoothing outperforms one-hot labels. This model is robust to most smoothing values. Smooth labels help the model continue to make improvements late in training.
+
+## Experiment 8 (Teacher Forcing and Learning Rate Schedule)
+
+- v70: bleu4=23.79, --decoder_tf=always --scheduler=plateau
+- v71: bleu4=24.08, --decoder_tf=inv_sigmoid (match v70 schedule)
+- v72: bleu4=24.61, --decoder_tf=inv_sigmoid --scheduler=plateau
+- v73: bleu4=22.88, --decoder_tf=inv_sigmoid --scheduler=exp --lr_gamma=0.9
+- v74: bleu4=24.54, --decoder_tf=inv_sigmoid --scheduler=cosine
+
+![experiments_8_bleu4](/data/readme/experiments_8_bleu4.png)
+
+Always teacher forcing (v70) underperforms inv_sigmoid (v71) with the same learning rate schedules. Using a plateau scheduler and inv_sigmoid (v72) had the best bleu4 score. An exponential schedule (v73) did worst. The cosine annealing with restarts (v74) had an issue where it ended training on a high learning rate. I modified the schedule creation to always end on the lowest learning rate possible.
+
+### Results: Inverse Sigmoid is best and use cosine or plateau schedule.
+
+## Experiment 9 (Pretrained Word Embeddings)
+
+- v85: bleu4=20.10, 32k256_glove200 --embedding_lr=1e-5 --embed_norm=None
+- v86: bleu4=19.44, 32k256_glove200 --embedding_lr=1e-5 --embed_norm=1.0
+- v87: bleu4=17.91, 32k256 --embed_dim=200 --embedding_lr=2e-2 --embed_norm=None
+- v88: bleu4=19.85, 32k256 --embed_dim=200 --embedding_lr=2e-2 --embed_norm=1.0
+- v89: bleu4=19.18, 32k256_glove100 --embedding_lr=1e-5 --embed_norm=None
+- v90: bleu4=19.18, 32k256 --embed_dim=100 --embedding_lr=2e-2 --embed_norm=1.0
+- v91: bleu4=19.34, 32k256_glove300 --embedding_lr=1e-5 --embed_norm=None
+- v92: bleu4=19.97, 32k256 --embed_dim=300 --embedding_lr=2e-2 --embed_norm=1.0
+
+![experiments_9_1_bleu4](/data/readme/experiments_9_1_bleu4.png)
+
+Using non-normalized glove embeddings (v85) had metrics consistently above normalized embeddings (v86); therefore, I did not normalize when using the glove embeddings. Second, randomly initialized embeddings had the opposite results where normalized embeddings (v88) was better than non-normalized (v87).
+
+![experiments_9_2_bleu4](/data/readme/experiments_9_2_bleu4.png)
+
+It's hard to see any effect of embedding dimension, especially near the end of training. For each dimension size, the pretrained embeddings improve quickly (at epoch 30, v89>v90 and v85>v88 and v91>v92 for dimensions 100, 200, and 300, respectively). However, there is no qualitative trends distinguishable near the end of training.
+
+![experiments_9_3_bleu4](/data/readme/experiments_9_3_bleu4.png)
+
+For perplexity, lower is better. Looking down the values you can see that all the pretrained embeddings (v85,v89,v91) are all lower than the randomly initialized embeddings.
+
+### Results: You do not need to normalize pretrained embeddings, but you should normalize randomly initialized embeddings. Bleu score is ambiguous, however the pretrained embeddings have lower perplexity.
+
+## Summary of Experiments
+- adamw with a little weight decay
+- dropout pretty high. over 0.1 at minimum
+- pretrained encoder and finetune with a lr around 1e-5
+- decoder lr is related by batch size. with batch=1024, start with lr=1e-3. if you increase the batch, you can increase the lr
+- always use --deep_output. without it the decoder ignores the image
+- 1 layer lstm is fine.
+- --bucket_sampler saves time
+- keep att_gamma at 1.0
+- teacher forcing with inv_sigmoid schedule
+- weak image transformations. not too much cropping
+- label smoothing between 0.1 to 0.4 is beneficial
+- cosine or plateau lr schedule. make sure the lr is at least 1000 times less at the end of training
+- pretrained glove embeddings (non-normalized, embedding_lr=1e-5) or randomly initialized embeddings (normalized, embedding_lr=2e-2)
+
+## Things not tested that just kind of work
+- lr_warmup_steps with a few hundred steps
+- --grad_clip=norm --clip_value=5.0
 
 
-[WIP]
+# Sampling a Caption
 
-# Captioning / Validation
+The steps for training match inference steps with slight modification to how the RNN/LSTM decoder outputs are interpreted. The output of the decoder is a probability distribution and it must be sampled to get the predicted word. The simplest method is to pick the most likely word; this is called __greedy search__. An extension of this idea is called __beam search__. During beam search, a breadth-first search is done by tracking several candidate sequences and at each step the __topk most likely are choosen__. __Greedy__ and __beam__ search always selected the most likely words, which can lead to common phrases being oversampled in the generation. I decided to also try to sample from the whole distribution using __torch.multinomial__. The results were poor at first, but I rescaled the probabilities to make a sharper distribution and the outcomes have a lot more unique words and still follow language rules.
 
-Temperature scaling
-Random uniform grid search for reward
+The best way to understand the sampling process is to look in model.py in the forward method. Nearly every line is commented with an explanation.
 
 ## Results
+
+[WIP]
 
 models with size 128, 256, 512
 
