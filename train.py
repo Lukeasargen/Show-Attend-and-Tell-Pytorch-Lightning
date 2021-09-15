@@ -63,6 +63,8 @@ def get_args():
         help="int. default=1. Number of LSTM layers.")
     parser.add_argument('--decoder_tf', default=None, type=str, choices=['always', 'linear', 'inv_sigmoid', 'exp'],
         help="str. default=None. use always, linear, inv_sigmoid, exp.")
+    parser.add_argument('--decoder_tf_min', default=0.5, type=float,
+        help="float. default=0.5. Minimum percent of teacher forcing epsilon.")
     # General Training Hyperparameters
     parser.add_argument('--batch', default=1, type=int,
         help="int. default=1. batch size.")
@@ -120,6 +122,8 @@ def get_args():
     # Validation
     parser.add_argument('--val_interval', default=5, type=int,
         help="int. default=5. check validation every val_interval epochs. assigned to pl's check_val_every_n_epoch.")
+    parser.add_argument('--val_percent', default=0.5, type=float,
+        help="float. default=0.5. percentage of validation set to test during a validation step.")
     parser.add_argument('--val_beamk', default=3, type=int,
         help="int. default=3. beam width used during validation step.")
     parser.add_argument('--val_max_len', default=32, type=int,
@@ -176,13 +180,20 @@ def main(args):
             filename='{epoch:d}-{step}-{bleu4:.4f}',
             save_top_k=args.save_top_k,
             mode='max',
-            every_n_val_epochs=1,
+            every_n_epochs=1,
             save_last=True,  # Always save the latest weights
         )
     ]
 
     if args.early_stop_monitor is not None:
-        callbacks.append(EarlyStopping(monitor=args.early_stop_monitor, patience=args.early_stop_patience, mode='max'))
+        callbacks.append(
+            EarlyStopping(
+                monitor=args.early_stop_monitor,
+                patience=args.early_stop_patience,
+                mode='max',
+                check_on_train_epoch_end=False
+            )
+        )
 
     print(" * Creating Datasets and Dataloaders...")
 
@@ -230,8 +241,10 @@ def main(args):
             batch_size=args.batch, num_workers=args.workers,
             persistent_workers=(True if args.workers > 0 else False),
             pin_memory=True)
-    val_loader = DataLoader(dataset=valid_ds, shuffle=True,
-            batch_size=args.batch, num_workers=args.workers,
+    val_loader = DataLoader(dataset=valid_ds,
+            sampler=(BucketSampler(valid_ds.lengths, args.batch) if args.bucket_sampler else None),
+            shuffle=(not args.bucket_sampler),
+            batch_size=int(max(1, args.batch//4)), num_workers=args.workers,
             persistent_workers=(True if args.workers > 0 else False),
             pin_memory=True)
 
@@ -254,11 +267,12 @@ def main(args):
         gpus=args.ngpu,
         gradient_clip_algorithm=args.grad_clip,
         gradient_clip_val=args.clip_value,
+        limit_val_batches=args.val_percent,
         logger=logger,
         precision=args.precision,
         progress_bar_refresh_rate=1,
         max_epochs=args.epochs,
-        limit_val_batches=0.2,  # With shuffle=True, validate on 20% of the validation set each time
+        num_sanity_val_steps=0,
     )
 
     trainer.fit(

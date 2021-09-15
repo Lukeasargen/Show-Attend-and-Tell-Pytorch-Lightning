@@ -33,8 +33,8 @@ def get_encoder(args):
     if callable(models.__dict__[args.encoder_arch]):
         m = models.__dict__[args.encoder_arch](pretrained=args.pretrained)
 
-        # Only freeze the weights if the model is pretrained and no fine tuning
-        if args.pretrained and args.encoder_finetune_after<0:
+        # Only freeze the weights if the model is pretrained
+        if args.pretrained:
             for param in m.parameters():
                 param.requires_grad = False
 
@@ -164,7 +164,7 @@ class DeepOutput(nn.Module):
 
 
 class SAT(pl.LightningModule):
-    """ Shot, Attend, and Tell (SAT)
+    """ Show, Attend, and Tell (SAT)
     Note:
     -all image encoding is done in self.encoder using convolutional networks
     -all text decoding is done in this LightningModule (ie, beam search)
@@ -228,6 +228,8 @@ class SAT(pl.LightningModule):
             nn.Linear(self.hparams.decoder_dim, self.hparams.encoder_dim, bias=True),
             nn.Sigmoid()
         )
+        # torch.nn.init.xavier_normal_(self.beta[0].weight)
+        # self.beta[0].bias.data.fill_(0.01)
 
         # Sec 3.1.2 - Deep Output for word prediction
         self.deep_output = DeepOutput(self.hparams)
@@ -272,7 +274,7 @@ class SAT(pl.LightningModule):
                 rescore_method=None, rescore_reward=0.5,
                 return_all=False):
         """ Inference Method Only. Uses beam search to create a caption. """
-        assert sample_method in ["beam", "multinomial"]
+        assert sample_method in ["beam", "multinomial", "topk"]
 
         # Keep this arg since beamk get's overwritten as sequences are completed
         beamk_arg = beamk
@@ -341,7 +343,7 @@ class SAT(pl.LightningModule):
                 The motivation is to start the generation in a different region in
                 the hidden space and then finished the caption using the learned
                 language model. By decreasing the noise, I hope the model will
-                follow the learned language rules to finish the captions in an
+                use the learned language model to finish the captions in an
                 understandable way.
                 I did a quick evalutaion to see where to add the noise.
                 Bleu4 score. decoder_noise=0.1.
@@ -364,6 +366,9 @@ class SAT(pl.LightningModule):
                 # TODO : mask the <START> and <PAD> token, right?
                 scores[:, [self.stoi("<START>"), self.stoi("<PAD>")]] = float('-inf')
 
+                # if no_unk:
+                # scores[:, self.stoi("<UNK>")] -= 100 # float('-inf')
+
                 if step==0:
                     # Additionally mask the <END> and <UNK> on the first step
                     scores[:, [self.stoi("<END>"), self.stoi("<UNK>")]] = float('-inf')
@@ -381,7 +386,7 @@ class SAT(pl.LightningModule):
 
                     # The scores are all update. It's time to selected which seq to continue.
                     # Each method produces pred_idx, which is the hypotheses for this step
-                    # NOTE : don't forget to flatten the scores when selecting the index
+                    # NOTE : don't forget to FLATTEN the scores when selecting the index
                     if sample_method=="beam":
                         # Basic beam search considers all the scores without regard for parent node
                         # Flatten the scores so all scores are in dim=0
@@ -391,6 +396,22 @@ class SAT(pl.LightningModule):
                         # Multiplying by 20 is like sharpening the probalities, increases the relative logits
                         score_probs = F.softmax(20*seq_scores/step, dim=1)
                         pred_idx = torch.multinomial(score_probs.reshape(-1), beamk)
+                    elif sample_method=="topk":
+                        # Choose topk from each beam and then randomly sample
+                        topk = 5
+                        # Take the topk samples from each beam
+                        _, candidate_idxs = torch.topk(seq_scores, topk, dim=1)
+                        # This adjustment corrects for the vocab_size of each successive sequence
+                        # Add the adjustment and flatten the candidates
+                        adj_idx = torch.tensor([i*self.hparams.vocab_size for i in range(beamk)]).unsqueeze(1).to(candidate_idxs)
+                        candidate_idxs = (candidate_idxs+adj_idx).reshape(-1)
+                        # Multinomial sampling
+                        candidate_scores = seq_scores.reshape(-1)[candidate_idxs]
+                        candidate_probs = F.softmax(candidate_scores/step, dim=0)
+                        # Uniform sampling
+                        # candidate_probs = torch.ones(candidate_idxs.numel())
+                        choice_idx = torch.multinomial(candidate_probs, beamk)
+                        pred_idx = candidate_idxs[choice_idx]
 
                     # Update the top_scores by taking selected scores on the flatten scores
                     top_scores = seq_scores.reshape(-1)[pred_idx]
@@ -496,16 +517,13 @@ class SAT(pl.LightningModule):
         # annotations.shape = (batch, attention_dim, encoder_dim)
         annotations = self.encoder(img)
 
-        # To avoid fine tuning, detach annotation tesnsor so
-        # there's no gradients back to the encoder
-        if self.global_step < self.hparams.encoder_finetune_after:
-            annotations = annotations.detach()
-
-        # The design of my dataset ouputs dim=1 as the number of captions, but
-        # since in training this is always size 1, we can remove dim=1 
-        encoded_captions = torch.squeeze(encoded_captions, dim=1)
-        # Same with lengths, except remove the batch dimension so it is just a 1D vector
-        lengths = torch.squeeze(lengths, dim=1)
+        # Repeat the annotations to match the number of target captions
+        annotations = annotations.repeat_interleave(lengths.size(1), dim=0)
+        # The design of my dataset ouputs dim=1 as the number of captions
+        # We must flatten the num_captions dimension to match the annotations
+        encoded_captions = encoded_captions.reshape(-1, encoded_captions.size(2))
+        # Same with lengths
+        lengths = lengths.reshape(-1)
         # Shift the caption to the left to get the targets. The target is the next word
         targets = encoded_captions[:, 1:]
 
@@ -579,19 +597,24 @@ class SAT(pl.LightningModule):
             if self.hparams.decoder_tf=="always":
                 epsilon = torch.tensor(1)
             elif self.hparams.decoder_tf=="linear":
-                # Linearly decays down to final_eps teacher forcing by the final epoch
-                final_eps = 0.5
-                epsilon = torch.tensor(1 - (1-final_eps)*self.current_epoch/self.hparams.epochs)
+                # Linear decays down to decoder_tf_min teacher forcing by the final epoch
+                epsilon = torch.tensor(1 - (1-self.hparams.decoder_tf_min)*self.current_epoch/self.hparams.epochs)
             elif self.hparams.decoder_tf=="inv_sigmoid":
                 # Shift the 50% point to b, change the slope with g
-                b, g = 1.0*self.hparams.epochs, 5.0
+                # l is from the final epsilon, used to set b
+                l = -torch.log(torch.tensor(self.hparams.decoder_tf_min/(1-self.hparams.decoder_tf_min)))
+                g = 5.0
+                b = (1/((l/g)+1))*self.hparams.epochs
                 epsilon = 1/(1+torch.exp(torch.tensor((g/b)*(self.current_epoch-b))))
             elif self.hparams.decoder_tf=="exp":
-                # Exponentially decays down to final_eps teacher forcing by the final epoch
-                final_eps = 0.5
-                epsilon = torch.exp(torch.log(torch.tensor(final_eps))/self.hparams.epochs)**self.current_epoch
+                # Exponential decays down to decoder_tf_min teacher forcing by the final epoch
+                epsilon = torch.exp(torch.log(torch.tensor(self.hparams.decoder_tf_min))/self.hparams.epochs)**self.current_epoch
         else:
             epsilon = torch.tensor(0)  # No teacher forcing
+
+        if self.global_step==self.hparams.encoder_finetune_after and self.hparams.encoder_finetune_after>=0:
+            for param in self.encoder.parameters():
+                param.requires_grad = True
 
         # Forward pass
         logits_packed, targets_packed, alphas = self.train_batch(batch, epsilon)
@@ -607,14 +630,16 @@ class SAT(pl.LightningModule):
         # Create metrics dict
         metrics = {
             "loss": loss,
-            "accuracy": acc,
-            "epsilon_tf": epsilon.float(),
+            "accuracy": float(acc),
+            "epsilon_tf": float(epsilon),
         }
 
         # Update tensorboard for each train step
         for k, v in metrics.items():
             key = "{}/train".format(k)
-            val = metrics[k].detach().item()
+            val = metrics[k]
+            if torch.is_tensor(val):
+                val = val.item()
             self.logger.experiment.add_scalar(key, val, global_step=self.global_step)
 
         # Update the lr during warmup
@@ -630,6 +655,7 @@ class SAT(pl.LightningModule):
             # Step these schedulers every batch
             if type(self.scheduler) in [CosineAnnealingWarmRestarts, OneCycleLR]:
                 self.scheduler.step()
+                # TODO : when the lr increases during a restart, save a checkpoint
 
         return metrics
 
@@ -637,7 +663,8 @@ class SAT(pl.LightningModule):
         # Calculating epoch metrics
         for k in outputs[0].keys():
             key = "{}/train_epoch".format(k)
-            val = torch.stack([x[k] for x in outputs]).mean().detach().item()
+            vals = [x[k] for x in outputs]
+            val = sum(vals) / len(vals) if len(vals)!=0 else 0
             self.logger.experiment.add_scalar(key, val, global_step=self.current_epoch+1)
 
         # Log lr, group 0 is a decoder module
@@ -648,7 +675,7 @@ class SAT(pl.LightningModule):
         if type(self.scheduler) in [MultiStepLR, ExponentialLR]:
             self.scheduler.step()
 
-    def score_captions(self, encoded_captions, lengths, captions, perplexities=None):
+    def score_captions(self, captions, encoded_captions, lengths, perplexities=None):
         # Remove <PAD> <START> <END>
         references = [[c[1:l] for c,l in zip(refs, lengths[i])] for i,refs in enumerate(encoded_captions.tolist())]
 
@@ -692,7 +719,7 @@ class SAT(pl.LightningModule):
         img, encoded_captions, lengths = batch  # Unpack
         captions, scores, alphas, perplexities = self.caption(img, beamk, max_gen_length,
             temperature, sample_method, decoder_noise, rescore_method, rescore_reward, return_all=False)
-        metrics = self.score_captions(encoded_captions, lengths, captions, perplexities)
+        metrics = self.score_captions(captions, encoded_captions, lengths, perplexities)
         return metrics
 
     def validation_step(self, batch, batch_idx):
@@ -738,20 +765,16 @@ class SAT(pl.LightningModule):
             return [{'params': no_decay, 'lr': lr, 'weight_decay': 0.0},
                     {'params': decay, 'lr': lr, 'weight_decay': weight_decay}]
 
+        # Get the parameters
         decoder_modules = [self.init_lstm, self.lstm, self.attention, self.beta, self.deep_output]
-        if self.hparams.weight_decay != 0:
-            params = add_weight_decay(decoder_modules, self.hparams.weight_decay, self.hparams.decoder_lr)
-            if self.hparams.embedding_lr>0:
-                # I don't think embeddings use weight_decay because they are normalized
-                params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr, 'weight_decay': 0.0}]
-            if self.hparams.encoder_finetune_after>0 and self.hparams.encoder_lr>0:
-                params += add_weight_decay([self.encoder], self.hparams.weight_decay, self.hparams.encoder_lr)
-        else:
-            params = [{'params': m.parameters(), 'lr': self.hparams.decoder_lr} for m in decoder_modules]
-            if self.hparams.embedding_lr>0:
-                params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr}]
-            if self.hparams.encoder_finetune_after>0 and self.hparams.encoder_lr>0:
-                params += [{'params': self.encoder.parameters(), 'lr': self.hparams.encoder_lr}]
+        params = add_weight_decay(decoder_modules, self.hparams.weight_decay, self.hparams.decoder_lr)
+        if self.hparams.embedding_lr>0:
+            # I don't think embeddings use weight_decay because they might be normalized
+            params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr, 'weight_decay': 0.0}]
+
+        # If either of these are true, then there is finetuning
+        if self.hparams.encoder_finetune_after>0 and self.hparams.encoder_lr>0:
+            params += add_weight_decay([self.encoder], self.hparams.weight_decay, self.hparams.encoder_lr)
 
         # NOTE : decoder_lr is provide as the required lr argument
         if self.hparams.opt == 'sgd':

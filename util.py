@@ -56,8 +56,12 @@ class BucketSampler(Sampler):
         self.idx_len_zip = list(zip(self.indices, self.lengths))
         # Use an OrderedDict with the lengths as keys
         len_map = OrderedDict()
-        for i, ll in self.idx_len_zip:
-            l = ll[0]  # Due to my custom dataset, the length list has one item
+        for i, length_list in self.idx_len_zip:
+            # Use the sum of the length list
+            # This is essentially the number of targets of the sample
+            # Placing the largest number of targets in the first batch
+            # will hopefully avoid OOM by avoiding memory growth.
+            l = sum(length_list)
             if l not in len_map:
                 len_map[l] = [i]  # Create a new lsit for this length
             else:
