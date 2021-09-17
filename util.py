@@ -2,7 +2,10 @@ from collections import OrderedDict
 import json
 
 import numpy as np
+from pathlib import Path
 from PIL import Image
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -161,6 +164,20 @@ def crop_max_square(pil_img, size):
     return pil_img
 
 
+class RestartCheckpoint(ModelCheckpoint):
+    def __init__(self, *args, **kwargs):
+        super(RestartCheckpoint, self).__init__(*args, **kwargs)
+        self.prev_lr = 0
 
-
+    def on_train_batch_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule, *args, **kwargs
+    ):
+        assert self.dirpath is not None
+        if trainer.global_step > pl_module.hparams.lr_warmup_steps:
+            curr_lr = pl_module.optimizers().param_groups[0]['lr']
+            if self.prev_lr==0: self.prev_lr = curr_lr
+            if curr_lr > self.prev_lr:
+                current = Path(self.dirpath) / f"restart-{pl_module.global_step}.ckpt"
+                trainer.save_checkpoint(current)
+            self.prev_lr = curr_lr
 

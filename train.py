@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms as T
 
 from model import SAT
-from util import CocoCaptionDataset, BucketSampler, AddGaussianNoise
+from util import CocoCaptionDataset, BucketSampler, AddGaussianNoise, RestartCheckpoint
 
 
 def get_args():
@@ -53,8 +53,8 @@ def get_args():
     parser.add_argument('--encoder_dim', default=None, type=int,
         help="int. default=None. Adds a 1x1 conv to the encoder if out_channels!=encoder_dim. D in the paper.")
     # Text Decoder Parameters
-    parser.add_argument('--embed_dim', default=512, type=int,
-        help="int. default=512. Dimension of vocab embeddings.")
+    parser.add_argument('--embed_dim', default=256, type=int,
+        help="int. default=256. Dimension of vocab embeddings.")
     parser.add_argument('--embed_norm', default=None, type=float,
         help="float. default=None. Maximum L2 norm for the embeddings.")
     parser.add_argument('--decoder_dim', default=512, type=int,
@@ -182,6 +182,10 @@ def main(args):
             mode='max',
             every_n_epochs=1,
             save_last=True,  # Always save the latest weights
+        ),
+        RestartCheckpoint(
+                dirpath=dirpath,
+                every_n_train_steps=1,
         )
     ]
 

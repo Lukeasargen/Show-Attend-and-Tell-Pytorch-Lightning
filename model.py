@@ -228,8 +228,8 @@ class SAT(pl.LightningModule):
             nn.Linear(self.hparams.decoder_dim, self.hparams.encoder_dim, bias=True),
             nn.Sigmoid()
         )
-        # torch.nn.init.xavier_normal_(self.beta[0].weight)
-        # self.beta[0].bias.data.fill_(0.01)
+        fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.beta[0].weight)
+        # self.beta[0].bias.data.fill_(1/fan_in)
 
         # Sec 3.1.2 - Deep Output for word prediction
         self.deep_output = DeepOutput(self.hparams)
@@ -655,7 +655,6 @@ class SAT(pl.LightningModule):
             # Step these schedulers every batch
             if type(self.scheduler) in [CosineAnnealingWarmRestarts, OneCycleLR]:
                 self.scheduler.step()
-                # TODO : when the lr increases during a restart, save a checkpoint
 
         return metrics
 
