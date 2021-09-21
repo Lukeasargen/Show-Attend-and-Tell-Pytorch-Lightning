@@ -2,7 +2,6 @@ import argparse
 import os
 
 import pytorch_lightning as pl
-from pytorch_lightning import callbacks
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -25,8 +24,8 @@ def get_args():
         help="str. default=default. Tensorboard name and log folder name.")
     parser.add_argument('--workers', default=0, type=int,
         help="int. default=0. Dataloader num_workers. good practice is to use number of cpu cores.")
-    parser.add_argument('--ngpu', default=1, type=int,
-        help="int. default=1. number of gpus to train on. see pl docs for details.")
+    parser.add_argument('--gpus', nargs="+", default=None, type=int,
+        help="str. default=None (cpu). gpus to train on. see pl multi_gpu docs for details.")
     parser.add_argument('--benchmark', default=False, action='store_true',
         help="store_true. set cudnn.benchmark.")
     parser.add_argument('--precision', default=32, type=int, choices=[16, 32],
@@ -140,6 +139,8 @@ def get_args():
     # Misc
     parser.add_argument('--dropout', default=0.0, type=float,
         help="float. default=0.0. Dropout is used before intializing the lstm and before projecting to the vocab.")
+    parser.add_argument('--embedding_dropout', default=0.0, type=float,
+        help="float. default=0.0. Dropout is used on the word embeddings.")
     parser.add_argument('--label_smoothing', default=0.0, type=float,
         help="float. default=0. label smoothing epsilon value.")
     # Augmentations
@@ -230,7 +231,6 @@ def main(args):
     train_transforms = T.Compose(train_transforms)
 
     train_ds = CocoCaptionDataset(jsonpath=args.json, split="train", transforms=train_transforms)
-    valid_ds = CocoCaptionDataset(jsonpath=args.json, split="val", transforms=valid_transforms)
 
     # Add dataset parameters to the args/hparams
     args.vocab_stoi = train_ds.json["vocab_stoi"]
@@ -245,19 +245,18 @@ def main(args):
             batch_size=args.batch, num_workers=args.workers,
             persistent_workers=(True if args.workers > 0 else False),
             pin_memory=True)
+    args.train_loader_len = len(train_loader)
+
+
+    valid_ds = CocoCaptionDataset(jsonpath=args.json, split="val", transforms=valid_transforms)
     val_loader = DataLoader(dataset=valid_ds,
             sampler=(BucketSampler(valid_ds.lengths, args.batch) if args.bucket_sampler else None),
             shuffle=(not args.bucket_sampler),
-            batch_size=int(max(1, args.batch//4)), num_workers=args.workers,
+            batch_size=int(max(1, args.batch//1)), num_workers=args.workers,
             persistent_workers=(True if args.workers > 0 else False),
             pin_memory=True)
 
-    args.train_loader_len = len(train_loader)
 
-    # imgs, caps, lens = next(iter(train_loader))
-    # print("imgs:", type(imgs), imgs.device, imgs.dtype, imgs.shape)
-    # print("caps:", type(caps), caps.device, caps.dtype, caps.shape)
-    # print("lens:", type(lens), lens.device, lens.dtype, lens.shape)
     print(f" * Effective Batch Size = {args.batch*args.accumulate}")
 
     model = SAT(**vars(args))
@@ -268,7 +267,7 @@ def main(args):
         callbacks=callbacks,
         check_val_every_n_epoch=args.val_interval,
         deterministic=True,  # cudnn.deterministic
-        gpus=args.ngpu,
+        gpus=args.gpus,
         gradient_clip_algorithm=args.grad_clip,
         gradient_clip_val=args.clip_value,
         limit_val_batches=args.val_percent,

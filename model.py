@@ -197,6 +197,7 @@ class SAT(pl.LightningModule):
             max_norm=self.hparams.embed_norm,
             padding_idx=self.stoi("<PAD>")
         )
+        self.embedding_dropout = nn.Dropout(p=self.hparams.embedding_dropout)
         if self.hparams.pretrained_embedding is not None:
             # Load the pretrained embedding matrix into the embedding layer
             embedding_matrix = np.load(self.hparams.pretrained_embedding)
@@ -229,7 +230,7 @@ class SAT(pl.LightningModule):
             nn.Sigmoid()
         )
         fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.beta[0].weight)
-        # self.beta[0].bias.data.fill_(1/fan_in)
+        self.beta[0].bias.data.fill_(1/fan_in)
 
         # Sec 3.1.2 - Deep Output for word prediction
         self.deep_output = DeepOutput(self.hparams)
@@ -551,12 +552,13 @@ class SAT(pl.LightningModule):
             # NOTE : hard coded value
             if step<=2 or torch.rand(1) <= epsilon:
                 # Get the actual next word embedding
-                embed_prev_words = self.embedding(encoded_captions[incomplete_idxs, step])
+                prev_word_idxs = encoded_captions[incomplete_idxs, step]
             else:
-                # Get the argmax of the previous logits
-                idxs = torch.argmax(logits[incomplete_idxs, step-1, :], dim=1)
-                # Get the predicted next word embedding
-                embed_prev_words = self.embedding(idxs)
+                # Get the argmax of the previous logits, predicted next word
+                prev_word_idxs = torch.argmax(logits[incomplete_idxs, step-1, :], dim=1)
+
+            # Get the word embeddings
+            embed_prev_words = self.embedding_dropout(self.embedding(prev_word_idxs))
 
             # Compute the attention context vector from the annotations and the previous hidden state
             # zt.shape, alpha.shape = (batch, encoder_dim)
