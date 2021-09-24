@@ -157,9 +157,8 @@ class DeepOutput(nn.Module):
     def forward(self, prev_embed, hidden, context):
         if self.deep:
             x = prev_embed + self.hidden(hidden) + self.context(context)
-            logit = self.output(self.dropout(torch.tanh(x)))
-        else:
-            logit = self.output(self.dropout(hidden))
+            hidden = torch.tanh(x)
+        logit = self.output(self.dropout(hidden))
         return logit  # logit.shape = (batch, vocab_size)
 
 
@@ -194,7 +193,7 @@ class SAT(pl.LightningModule):
         self.embedding = nn.Embedding(
             num_embeddings=self.hparams.vocab_size,
             embedding_dim=self.hparams.embed_dim,
-            max_norm=self.hparams.embed_norm,
+            max_norm=None if self.hparams.weight_tying else self.hparams.embed_norm,  # pretty sure you don't want to normalize the output matrix over the word feature dimension
             padding_idx=self.stoi("<PAD>")
         )
         self.embedding_dropout = nn.Dropout(p=self.hparams.embedding_dropout)
@@ -233,7 +232,12 @@ class SAT(pl.LightningModule):
         self.beta[0].bias.data.fill_(1/fan_in)
 
         # Sec 3.1.2 - Deep Output for word prediction
-        self.deep_output = DeepOutput(self.hparams)
+        self.output = DeepOutput(self.hparams)
+
+        # Weight tying
+        if self.hparams.weight_tying and self.hparams.deep_output:
+            self.output.output.weight = self.embedding.weight
+
 
     def stoi(self, s):
         return int(self.hparams.vocab_stoi.get(s, self.hparams.vocab_stoi['<UNK>']))
@@ -359,7 +363,7 @@ class SAT(pl.LightningModule):
                     h += torch.randn(h.size(), device=h.device) * decoder_noise/(step+1)
 
                 _, (h, c) = self.lstm(h_in, (h, c))
-                logit = self.deep_output(embed_prev_words, h[-1], zt)
+                logit = self.output(embed_prev_words, h[-1], zt)
 
                 # Use the log probability as the score
                 scores = F.log_softmax(logit/current_temperature, dim=1)
@@ -577,7 +581,7 @@ class SAT(pl.LightningModule):
             _, (h[:, incomplete_idxs], c[:, incomplete_idxs]) = self.lstm(h_in, (h[:, incomplete_idxs], c[:, incomplete_idxs]))
 
             # Compute the word logits
-            logit = self.deep_output(embed_prev_words, h[-1, incomplete_idxs], zt)
+            logit = self.output(embed_prev_words, h[-1, incomplete_idxs], zt)
             logits[incomplete_idxs, step, :] = logit.clone().float()  # clone because float() is an inplace operation
 
         # End of the loop
@@ -767,10 +771,11 @@ class SAT(pl.LightningModule):
                     {'params': decay, 'lr': lr, 'weight_decay': weight_decay}]
 
         # Get the parameters
-        decoder_modules = [self.init_lstm, self.lstm, self.attention, self.beta, self.deep_output]
+        decoder_modules = [self.init_lstm, self.lstm, self.attention, self.beta, self.output]
         params = add_weight_decay(decoder_modules, self.hparams.weight_decay, self.hparams.decoder_lr)
-        if self.hparams.embedding_lr>0:
+        if self.hparams.embedding_lr>0 and not self.hparams.weight_tying:
             # I don't think embeddings use weight_decay because they might be normalized
+            # Also, weight_tying puts the parameters in the deep_output, so we dont need a second param group
             params += [{'params': self.embedding.parameters(), 'lr': self.hparams.embedding_lr, 'weight_decay': 0.0}]
 
         # If either of these are true, then there is finetuning

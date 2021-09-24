@@ -143,6 +143,8 @@ def get_args():
         help="float. default=0.0. Dropout is used on the word embeddings.")
     parser.add_argument('--label_smoothing', default=0.0, type=float,
         help="float. default=0. label smoothing epsilon value.")
+    parser.add_argument('--weight_tying', default=False, action='store_true',
+        help="store_true. set to use weight tying (Inan et al., 2016.")
     # Augmentations
     parser.add_argument('--aug_scale', default=0.9, type=float,
         help="float. default=0.9. lower bound for RandomResizedCrop. 1.0 uses CenterCrop")
