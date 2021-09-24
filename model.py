@@ -253,7 +253,7 @@ class SAT(pl.LightningModule):
 
     @torch.no_grad()
     def caption(self, img_tensor, beamk=3, max_gen_length=32, temperature=1.0, 
-                sample_method="beam", decoder_noise=None,
+                sample_method="beam", sample_topk=3, decoder_noise=None,
                 rescore_method=None, rescore_reward=0.5,
                 return_all=False):
         """ Caption method for better code readability.
@@ -270,12 +270,12 @@ class SAT(pl.LightningModule):
         """
         self.eval()  # Freeze all parameters and turn off dropout
         return self.forward(img_tensor, beamk, max_gen_length, temperature,
-                            sample_method, decoder_noise,
+                            sample_method, sample_topk, decoder_noise,
                             rescore_method, rescore_reward,
                             return_all)
 
     def forward(self, img, beamk=3, max_gen_length=32, temperature=1.0, 
-                sample_method="beam", decoder_noise=None,
+                sample_method="beam", sample_topk=3, decoder_noise=None,
                 rescore_method=None, rescore_reward=0.5,
                 return_all=False):
         """ Inference Method Only. Uses beam search to create a caption. """
@@ -403,18 +403,17 @@ class SAT(pl.LightningModule):
                         pred_idx = torch.multinomial(score_probs.reshape(-1), beamk)
                     elif sample_method=="topk":
                         # Choose topk from each beam and then randomly sample
-                        topk = 5
                         # Take the topk samples from each beam
-                        _, candidate_idxs = torch.topk(seq_scores, topk, dim=1)
+                        _, candidate_idxs = torch.topk(seq_scores, sample_topk, dim=1)
                         # This adjustment corrects for the vocab_size of each successive sequence
                         # Add the adjustment and flatten the candidates
                         adj_idx = torch.tensor([i*self.hparams.vocab_size for i in range(beamk)]).unsqueeze(1).to(candidate_idxs)
                         candidate_idxs = (candidate_idxs+adj_idx).reshape(-1)
+                        # Uniform sampling
+                        # candidate_probs = torch.ones(candidate_idxs.numel())
                         # Multinomial sampling
                         candidate_scores = seq_scores.reshape(-1)[candidate_idxs]
                         candidate_probs = F.softmax(candidate_scores/step, dim=0)
-                        # Uniform sampling
-                        # candidate_probs = torch.ones(candidate_idxs.numel())
                         choice_idx = torch.multinomial(candidate_probs, beamk)
                         pred_idx = candidate_idxs[choice_idx]
 
