@@ -99,20 +99,19 @@ def get_encoder(args):
 
 class InitLSTM(nn.Module):
     """ Sec 3.1.2 "predicted by an average of the annotation vectors feed through two separate MLPs" """
-    def __init__(self, encoder_dim, decoder_dim, decoder_layers, dropout, bias=True):
+    def __init__(self, args, bias=True):
         super(InitLSTM, self).__init__()
-        self.decoder_dim = decoder_dim
-        self.decoder_layers = decoder_layers
-        self.init_h = nn.Linear(encoder_dim, decoder_dim*decoder_layers, bias=bias)
-        self.init_c = nn.Linear(encoder_dim, decoder_dim*decoder_layers, bias=bias)
-        self.dropout = nn.Dropout(p=dropout)
+        self.decoder_dim = args.decoder_dim
+        self.decoder_layers = args.decoder_layers
+        self.factorize = nn.Linear(args.encoder_dim, args.embed_dim, bias=bias)
+        self.init = nn.Linear(args.embed_dim, 2*args.decoder_dim*args.decoder_layers, bias=bias)
+        self.dropout = nn.Dropout(p=args.dropout)
 
     def forward(self, annotations):
         # Mean over the locations (dim=1) to get a vector of length encoder_dim
-        mean = self.dropout(annotations.mean(1))
-        # shape = (decoder_layers, batch, decoder_dim)
-        init_h = self.init_h(mean).reshape(self.decoder_layers, mean.shape[0], self.decoder_dim)
-        init_c = self.init_c(mean).reshape(self.decoder_layers, mean.shape[0], self.decoder_dim)
+        mean = self.dropout(annotations.mean(1))  # shape = (decoder_layers, batch, decoder_dim)
+        init = self.init(self.factorize(mean)).reshape(2*self.decoder_layers, mean.shape[0], self.decoder_dim)
+        init_h, init_c = init[:self.decoder_layers], init[self.decoder_layers:]
         return init_h, init_c
 
 
@@ -147,18 +146,19 @@ class DeepOutput(nn.Module):
         super(DeepOutput, self).__init__()
         self.deep = args.deep_output
         self.dropout = nn.Dropout(p=args.dropout)
+        # Always project the hidden size into the embedding size
+        self.hidden = nn.Linear(args.decoder_dim, args.embed_dim, bias=False)
         if self.deep:
-            self.hidden = nn.Linear(args.decoder_dim, args.embed_dim, bias=False)
             self.context = nn.Linear(args.encoder_dim, args.embed_dim, bias=False)
-            self.output = nn.Linear(args.embed_dim, args.vocab_size)
-        else:
-            self.output = nn.Linear(args.decoder_dim, args.vocab_size)
+        # weight_tying does not use bias
+        self.output = nn.Linear(args.embed_dim, args.vocab_size, bias=(not args.weight_tying))
 
     def forward(self, prev_embed, hidden, context):
         if self.deep:
-            x = prev_embed + self.hidden(hidden) + self.context(context)
-            hidden = torch.tanh(x)
-        logit = self.output(self.dropout(hidden))
+            x = torch.tanh(prev_embed + self.hidden(hidden) + self.context(context))
+        else:
+            x = self.hidden(hidden)
+        logit = self.output(self.dropout(x))
         return logit  # logit.shape = (batch, vocab_size)
 
 
@@ -193,7 +193,7 @@ class SAT(pl.LightningModule):
         self.embedding = nn.Embedding(
             num_embeddings=self.hparams.vocab_size,
             embedding_dim=self.hparams.embed_dim,
-            max_norm=None if self.hparams.weight_tying else self.hparams.embed_norm,  # pretty sure you don't want to normalize the output matrix over the word feature dimension
+            max_norm=self.hparams.embed_norm,
             padding_idx=self.stoi("<PAD>")
         )
         self.embedding_dropout = nn.Dropout(p=self.hparams.embedding_dropout)
@@ -203,8 +203,7 @@ class SAT(pl.LightningModule):
             self.embedding.weight = nn.Parameter(torch.tensor(embedding_matrix, dtype=torch.float32))
 
         # Sec 3.1.2 - Intialize the hidden states based on the mean annotations and two separate MLPs.
-        self.init_lstm = InitLSTM(self.hparams.encoder_dim, self.hparams.decoder_dim,
-                                self.hparams.decoder_layers, self.hparams.dropout, bias=True)
+        self.init_lstm = InitLSTM(self.hparams, bias=True)
 
         # Sec 3.1.2 Equations 1, 2, 3 - Apply the LSTM update rules.
         # Per the paper, input_size is encoder_dim+embed_dim (D+m) and the hidden_size is decoder_dim (n).
@@ -718,11 +717,11 @@ class SAT(pl.LightningModule):
         return metrics
 
     def val_batch(self, batch, beamk=3, max_gen_length=32, temperature=0.5,
-                sample_method="beam", decoder_noise=None,
+                sample_method="beam", sample_topk=3, decoder_noise=None,
                 rescore_method=None, rescore_reward=0.5):
         img, encoded_captions, lengths = batch  # Unpack
         captions, scores, alphas, perplexities = self.caption(img, beamk, max_gen_length,
-            temperature, sample_method, decoder_noise, rescore_method, rescore_reward, return_all=False)
+            temperature, sample_method, sample_topk, decoder_noise, rescore_method, rescore_reward, return_all=False)
         metrics = self.score_captions(captions, encoded_captions, lengths, perplexities)
         return metrics
 
