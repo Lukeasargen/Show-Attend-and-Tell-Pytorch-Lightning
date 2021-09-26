@@ -47,8 +47,6 @@ def get_args():
     parser.add_argument('--pretrained', default=False, action='store_true')
     parser.add_argument('--encoder_finetune_after', default=-1, type=int,
         help="int. default=-1 is no finetuning. Start finetuning after this number of steps.")
-    parser.add_argument('--encoder_size', default=None, type=int,
-        help="int. default=None. Square size of the encoder feature maps. Square this to get L in the paper.")
     parser.add_argument('--encoder_dim', default=None, type=int,
         help="int. default=None. Adds a 1x1 conv to the encoder if out_channels!=encoder_dim. D in the paper.")
     # Text Decoder Parameters
@@ -56,6 +54,8 @@ def get_args():
         help="int. default=256. Dimension of vocab embeddings.")
     parser.add_argument('--embed_norm', default=None, type=float,
         help="float. default=None. Maximum L2 norm for the embeddings.")
+    parser.add_argument('--attention_dim', default=128, type=int,
+        help="int. default=512. Dimension of soft attention projection.")
     parser.add_argument('--decoder_dim', default=512, type=int,
         help="int. default=512. Dimension of LSTM hidden states.")
     parser.add_argument('--decoder_layers', default=1, type=int,
@@ -121,8 +121,8 @@ def get_args():
     # Validation
     parser.add_argument('--val_interval', default=5, type=int,
         help="int. default=5. check validation every val_interval epochs. assigned to pl's check_val_every_n_epoch.")
-    parser.add_argument('--val_percent', default=0.5, type=float,
-        help="float. default=0.5. percentage of validation set to test during a validation step.")
+    parser.add_argument('--val_percent', default=1.0, type=float,
+        help="float. default=1.0. percentage of validation set to test during a validation step.")
     parser.add_argument('--val_beamk', default=3, type=int,
         help="int. default=3. beam width used during validation step.")
     parser.add_argument('--val_max_len', default=32, type=int,

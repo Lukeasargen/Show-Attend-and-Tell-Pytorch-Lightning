@@ -13,20 +13,6 @@ from torchvision.transforms import Normalize
 from util import LabelSmoothing
 
 
-class FlattenShuffle(nn.Module):
-    """ Flatten and Shuffle the encoder output.
-        Change the shape from (B, C, H, W) to (B, H*W, C).
-    """
-    def __init__(self):
-        super(FlattenShuffle, self).__init__()
-
-    def forward(self, x):
-        b, c, h, w = x.shape
-        x = x.reshape(b, c, h*w)  # Flatten the feature maps to 1 dimension
-        # 0=batch, 1=channels, 2=locations
-        return x.permute(0, 2, 1)
-
-
 def get_encoder(args):
     """ Return a torchvision model with an output volume for SAT. """
     # args.encoder_arch is a string
@@ -59,7 +45,7 @@ def get_encoder(args):
         # Pass a fake iamge through the model to see what the annotation dimensions are
         fake_img = torch.zeros(1, 3, args.input_size, args.input_size)
         yhat = nn.Sequential(*layers)(fake_img)
-        _, final_dim, final_size, _ = yhat.shape
+        final_dim = yhat.shape[1]
 
         if args.encoder_dim is not None and args.encoder_dim!=final_dim:
             # This conv forces the number of features to be encoder_dim
@@ -68,31 +54,11 @@ def get_encoder(args):
         else:
             # Store the encoder_dim back in the hparams
             args.encoder_dim = final_dim
-        
-        # TODO : pool->conv or conv->pool? pool will change the features locally before the conv op
-        # For now conv->pool, bc conv will take the actual features as input rather than pooled features
-        if args.encoder_size is not None and args.encoder_size!=final_size:
-            if args.encoder_size < final_size:
-                # Going to a smaller map uses average pooling
-                layers.append(nn.AdaptiveAvgPool2d((args.encoder_size, args.encoder_size)))
-            elif args.encoder_size > final_size:
-                # Average pooling uses nearest neighbor for upsampling, but sometimes it interpolates
-                # To avoid not knowning what upsampling happens, force a behavior with nn.Upsample
-                # Setting align_corners=False is the default, but it is set explicitly to suppress warnings
-                layers.append(nn.Upsample((args.encoder_size, args.encoder_size), mode="bilinear", align_corners=False))
-        else:
-            # Store the encoder_size back in the hparams
-            args.encoder_size = final_size
-
-        # Layer that flattens the feature maps from 2d to 1d and then
-        # reshapes so that there are L feature locations along dim=1, and
-        # dim=2 is the representation with size D
-        layers.append(FlattenShuffle())
-        
+                
         # First layer of the model, input is [0,1] normalized images
         norm = Normalize(args.mean, args.std, inplace=True)
 
-        # Sequential model returns shape (batch, encoder_size**2, encoder_dim)
+        # Sequential model returns shape (batch, locations, encoder_dim)
         return nn.Sequential(norm, *layers)
     raise ValueError("Unknown model arg: {}".format(args.encoder_arch))
 
@@ -108,8 +74,8 @@ class InitLSTM(nn.Module):
         self.dropout = nn.Dropout(p=args.dropout)
 
     def forward(self, annotations):
-        # Mean over the locations (dim=1) to get a vector of length encoder_dim
-        mean = self.dropout(annotations.mean(1))  # shape = (decoder_layers, batch, decoder_dim)
+        # Mean over the locations (dim=2,3) to get a vector of (batch, encoder_dim)
+        mean = self.dropout(annotations.mean((2,3)))
         init = self.init(self.factorize(mean)).reshape(2*self.decoder_layers, mean.shape[0], self.decoder_dim)
         init_h, init_c = init[:self.decoder_layers], init[self.decoder_layers:]
         return init_h, init_c
@@ -119,25 +85,28 @@ class SoftAttention(nn.Module):
     """ SAT citation points here -> Bahdanau et al. (2014). Sec 3.1 Equations 5, 6
         Formula is clear here: https://paperswithcode.com/method/additive-attention
     """
-    def __init__(self, attention_dim, encoder_dim, hidden_dim):
+    def __init__(self, args):
         super(SoftAttention, self).__init__()
-        self.encoder_att = nn.Linear(encoder_dim, attention_dim, bias=False)
-        self.decoder_att = nn.Linear(hidden_dim, attention_dim, bias=False)
-        self.f_att = nn.Linear(attention_dim, 1, bias=False)
+        self.encoder_att = nn.Linear(args.encoder_dim, args.attention_dim, bias=False)
+        self.decoder_att = nn.Linear(args.decoder_dim, args.attention_dim, bias=False)
+        self.f_att = nn.Linear(args.attention_dim, 1, bias=False)
 
     def forward(self, annotations, decoder_hidden):
         """ Returns the context and the alpha (for doubly sotchastic loss and visualizations) """
+        # Flatten and move the embeddings to the last dimension
+        b, c, h, w = annotations.shape
+        flattened = annotations.reshape(b, c, h*w).permute(0, 2, 1)
         # Convert encoder_dim to attention_dim features
-        att_enc = self.encoder_att(annotations)  # att_enc.shape = (batch, locations, attention_dim)
+        att_enc = self.encoder_att(flattened)  # att_enc.shape = (batch, locations, attention_dim)
         # Convert hidden_dim to attention_dim features, expaned dim=1 for braodcasting to all locations(dim=1)
         att_dec = self.decoder_att(decoder_hidden).unsqueeze(1)   # att_dec.shape = (batch, 1, attention_dim)
         # Take all the features and predict and attention value for each location(dim=1)
-        att = self.f_att(torch.tanh(att_enc+att_dec))  # att.shape = (batch, attention_dim, 1)
+        att = self.f_att(torch.tanh(att_enc+att_dec))*flattened.shape[1]**-0.5  # att.shape = (batch, locations, 1)
         # Softmax over the all locations(dim=1)
-        alpha = F.softmax(att, dim=1)  # alpha.shape = (batch, attention_dim, 1)
+        alpha = F.softmax(att, dim=1)  # alpha.shape = (batch, locations, 1)
         # Apply the alphas to the annotations, then sum each feature map over all locations(dim=1)
-        zt = (annotations*alpha).sum(dim=1)  # zt.shape = (batch, encoder_dim)
-        return zt, alpha.reshape(alpha.shape[0], -1) # Remove last dim of alpha before return
+        zt = (flattened*alpha).sum(dim=1)  # zt.shape = (batch, encoder_dim)
+        return zt, alpha.permute(0, 2, 1).reshape(b, h, w)  # Return alphas.shape = (batch, height, width)
 
 
 class DeepOutput(nn.Module):
@@ -184,10 +153,6 @@ class SAT(pl.LightningModule):
         # Call the function to get the encoder architecture.
         self.encoder = get_encoder(self.hparams)
 
-        # This is the size of the flattened encoding annotations.
-        # attention_dim is the same as L in the paper.
-        self.hparams.attention_dim = self.hparams.encoder_size**2
-
         # Sec 3.1.2 - Matrix E is the embedding matrix of shape (vocab_size, embed_dim).
         # This is initialized randomly and is trainable by default
         self.embedding = nn.Embedding(
@@ -215,11 +180,7 @@ class SAT(pl.LightningModule):
         )
 
         # Sec 3.1.2 Equations 4, 5, 6 - Soft Attention Module
-        self.attention = SoftAttention(
-            attention_dim=self.hparams.attention_dim,
-            encoder_dim=self.hparams.encoder_dim,
-            hidden_dim=self.hparams.decoder_dim
-        )
+        self.attention = SoftAttention(self.hparams)
 
         # Sec 4.2.1 - predict gating scalar \beta from previous hidden state
         # This is outside of the attention module bc the context vector is needed for deep output
@@ -292,6 +253,7 @@ class SAT(pl.LightningModule):
 
         # Encode the batch
         annotations = self.encoder(img)
+        _, _, height, width = annotations.shape
 
         # TODO : batch decoding with beam search?
         # Loop over the batch on image at a time
@@ -300,8 +262,8 @@ class SAT(pl.LightningModule):
             beamk = beamk_arg  # Reset to beamk args
 
             # Treat each image as a batch of beamk size
-            annots = annotations[idx, :]  # (attention_dim, encoder_dim))
-            annots = annots.expand(beamk, *annots.shape)  # (beamk, attention_dim, encoder_dim)
+            annots = annotations[idx, :]  # (locations, encoder_dim))
+            annots = annots.expand(beamk, *annots.shape)  # (beamk, locations, encoder_dim)
 
             # Init the beam batch
             h, c = self.init_lstm(annots)  # (beamk, decoder_dim)
@@ -315,8 +277,8 @@ class SAT(pl.LightningModule):
             top_scores = torch.zeros(beamk, dtype=torch.float).to(self.device)
 
             # Keep the alphas for visualization
-            # alphas.shape = (step, beamk, attention_dim)
-            alphas = torch.zeros(1, beamk, self.hparams.attention_dim).to(self.device)
+            # alphas.shape = (step, beamk, locations)
+            alphas = torch.zeros(1, beamk, height, width).to(self.device)
 
             # Extend these lists once the <END> is predicted or max_gen_length is reached
             finished_captions = []
@@ -517,8 +479,9 @@ class SAT(pl.LightningModule):
         img, encoded_captions, lengths = batch
 
         # Encode the images into annotation vectors
-        # annotations.shape = (batch, attention_dim, encoder_dim)
+        # annotations.shape = (batch, lcoation, encoder_dim)
         annotations = self.encoder(img)
+        _, _, height, width = annotations.shape
 
         # Repeat the annotations to match the number of target captions
         annotations = annotations.repeat_interleave(lengths.size(1), dim=0)
@@ -540,7 +503,7 @@ class SAT(pl.LightningModule):
         # This is used to calculate the softmax of the token prediction
         logits = torch.zeros(bs, caplen-1, self.hparams.vocab_size).to(self.device)
         # This stores the attention alphas to compute the doubly stochastic loss
-        alphas = torch.zeros(bs, caplen-1, self.hparams.attention_dim).to(self.device)
+        alphas = torch.zeros(bs, caplen-1, height*width).to(self.device)
 
         # Now we can step through each time step
         # NOTE : the batch dimension will reduce as the captions are completed
@@ -564,8 +527,10 @@ class SAT(pl.LightningModule):
 
             # Compute the attention context vector from the annotations and the previous hidden state
             # zt.shape, alpha.shape = (batch, encoder_dim)
-            zt, alpha = self.attention(annotations[incomplete_idxs], h[-1, incomplete_idxs])            
-            # Save the alpha values
+            zt, alpha = self.attention(annotations[incomplete_idxs], h[-1, incomplete_idxs])
+            alpha = alpha.reshape(sum(incomplete_idxs), height*width)
+
+            # Save the alpha values for the attention loss
             alphas[incomplete_idxs, step, :] = alpha
 
             # Compute the gating scalar beta from the previous hidden state
