@@ -270,36 +270,13 @@ Always teacher forcing (v70) underperforms inv_sigmoid (v71) with the same learn
 
 ### Results: Inverse Sigmoid is best and use cosine or plateau schedule.
 
-## Experiment 9 (Pretrained Word Embeddings)
-
-- v85: bleu4=20.10, 32k256_glove200 --embedding_lr=1e-5 --embed_norm=None
-- v86: bleu4=19.44, 32k256_glove200 --embedding_lr=1e-5 --embed_norm=1.0
-- v87: bleu4=17.91, 32k256 --embed_dim=200 --embedding_lr=2e-2 --embed_norm=None
-- v88: bleu4=19.85, 32k256 --embed_dim=200 --embedding_lr=2e-2 --embed_norm=1.0
-- v89: bleu4=19.18, 32k256_glove100 --embedding_lr=1e-5 --embed_norm=None
-- v90: bleu4=19.18, 32k256 --embed_dim=100 --embedding_lr=2e-2 --embed_norm=1.0
-- v91: bleu4=19.34, 32k256_glove300 --embedding_lr=1e-5 --embed_norm=None
-- v92: bleu4=19.97, 32k256 --embed_dim=300 --embedding_lr=2e-2 --embed_norm=1.0
-
-![experiments_9_1_bleu4](/data/readme/experiments_9_1_bleu4.png)
-
-Using non-normalized glove embeddings (v85) had metrics consistently above normalized embeddings (v86); therefore, I did not normalize when using the glove embeddings. Second, randomly initialized embeddings had the opposite results where normalized embeddings (v88) was better than non-normalized (v87).
-
-![experiments_9_2_bleu4](/data/readme/experiments_9_2_bleu4.png)
-
-It's hard to see any effect of embedding dimension, especially near the end of training. For each dimension size, the pretrained embeddings improve quickly (at epoch 30, v89>v90 and v85>v88 and v91>v92 for dimensions 100, 200, and 300, respectively). However, there is no qualitative trends distinguishable near the end of training.
-
-![experiments_9_3_bleu4](/data/readme/experiments_9_3_bleu4.png)
-
-For perplexity, lower is better. Looking down the values you can see that all the pretrained embeddings (v85,v89,v91) are all lower than the randomly initialized embeddings.
-
 ### Results: You do not need to normalize pretrained embeddings, but you should normalize randomly initialized embeddings. Bleu score is ambiguous, however the pretrained embeddings have lower perplexity.
 
 ## Summary of Experiments
 - adamw with a little weight decay
 - dropout pretty high. over 0.1 at minimum
 - pretrained encoder and finetune with a lr around 1e-5
-- decoder lr is related by batch size. with batch=1024, start with lr=1e-3. if you increase the batch, you can increase the lr
+- decoder lr is related by batch size. with batch=160, start with lr=2e-3. if you increase the batch, you can increase the lr
 - always use --deep_output. without it the decoder ignores the image
 - 1 layer lstm is fine.
 - --bucket_sampler saves time
@@ -377,3 +354,6 @@ Papers, repositories, or any site that taught me something useful:
     - 4.1 Image Captioning - dropout had a negative impact on metrics besides log likelihood. random sampling for an entire sequence rather than at each step had bad results 
 - Guo, C., Pleiss, G., Sun, Y. & Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks (cite arxiv:1706.04599Comment: ICML 2017) [[arXiv](https://arxiv.org/abs/1706.04599)]
     - 4.2 Extension to Multiclass Models - "The method to get an optimal temperature T for a trained model is through minimizing the negative log likelihood for a held-out validation dataset."
+- Inan, H., Khosravi, K., & Socher, R. (2017). Tying Word Vectors and Word Classifiers: A Loss Framework for Language Modeling [[arXiv](https://arxiv.org/abs/1611.01462)]
+    - Reusing the embedidng matrx as the output projection matrix is approximately the same as using a KL-divergence loss between y-hat prediction and y* empirical target distribution
+
