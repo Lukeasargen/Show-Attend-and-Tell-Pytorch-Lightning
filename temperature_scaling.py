@@ -1,6 +1,4 @@
-
 import torch
-from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
@@ -10,7 +8,7 @@ from util import CocoCaptionDataset
 
 
 def main():
-    checkpoint_path = "logs/default/version_52/last.ckpt"
+    checkpoint_path = "logs/default/version_131/last.ckpt"
 
     workers = 0
     batch = 16
@@ -33,11 +31,9 @@ def main():
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
             img, encoded_captions, lengths = batch
-            # Reshape the validation batch to unroll the multiple captions into the batch dimension
-            batch_len, repeats, pad_seq_len = encoded_captions.shape
-            img = torch.repeat_interleave(img, repeats=repeats, dim=0).to(device)
-            lengths = lengths.view(batch_len*repeats, 1).to(device)
-            encoded_captions = encoded_captions.view(batch_len*repeats, 1, pad_seq_len).to(device)
+            img = img.to(device)
+            lengths = lengths.to(device)
+            encoded_captions = encoded_captions.to(device)
             # Forward pass
             logits_packed, targets_packed, _ = model.train_batch([img, encoded_captions, lengths], epsilon=1)
             # Keep all predictions and targets in a list

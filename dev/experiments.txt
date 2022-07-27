@@ -1,0 +1,528 @@
+
+ARGUMENTS
+python train.py
+--json=data/coco/30k256.json
+--seed=42 --workers=6 --precision=32 --bucket_sampler
+--encoder_arch=shufflenet_v2_x1_0
+--pretrained --encoder_dim=512 --encoder_size=14 --encoder_finetune_after=0 --encoder_lr=1e-5
+--embed_dim=512 --embed_norm=1.0 --embedding_lr=1e-2
+--attention_dim=128
+--decoder_dim=512 --decoder_lr=1e-3 --decoder_layers=1
+--decoder_tf=always --decoder_tf_min=0.9
+--lr_warmup_steps=0 --batch=128 --accumulate=1 --epoch=80
+--grad_clip=value --clip_value=0.5
+--label_smoothing=0.0 --dropout=0.5
+--aug_scale=0.9 --aug_hflip=0.5 --aug_color_jitter=0.0 --aug_optical_strength=0.0 --aug_noise_std=0.01
+--att_gamma=1.0 --deep_output
+
+--val_interval=5 --val_beamk=3 --val_max_len=20
+["bleu1", "bleu2", "bleu3", "bleu4", "gleu"]
+--save_top_k=1 --save_monitor=bleu4
+--early_stop_monitor=bleu4 --early_stop_patience=4
+
+--opt=sgd --weight_decay=5e-4 --momentum=0.9 --nesterov
+--opt=adam
+--opt=adamw --weight_decay=1e-5
+
+--scheduler=step --milestones 70 --lr_gamma=0.2
+--scheduler=exp --lr_gamma=0.95
+--scheduler=plateau --plateau_patience11 --lr_gamma=0.1 --plateau_monitor=bleu4
+--scheduler=cosine --cosine_iterations=1e3 --cosine_multi=1 --min_lr=0.0
+--scheduler=one_cycle --one_cycle_pct=0.3 --one_cycle_div=25 --one_cycle_fdiv=1e4
+
+
+MISC RUNS
+v9 - 8k images, 5120 vocab, first run to near convergence, appears to overfit, loss and acc stop moving after lr drops at 90
+python train.py --json=data/coco/8k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --decoder_dim=256 --batch=256 --accumulate=1 --epoch=100 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 70 90 --dropout=0.25
+v10 - 24k images, 6000 vocab, 3x more iamges than v9, more vocab and lowered dropout so no clear way to analyze, lr drops help but the model was still improving at decoder_lr=4e-3, not as overfit bc loss was still decreasing
+python train.py --json=data/coco/24k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --decoder_dim=256 --batch=256 --accumulate=1 --epoch=100 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 70 90 --dropout=0.4
+v12 - add validation steps and metrics, model save topk checkpoint works, lower batch size and lower dropout than v10 and did worse than v10, i guess keep the batch high as possible
+python train.py --json=data/coco/8k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --decoder_dim=256 --batch=128 --accumulate=1 --epoch=100 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 70 90 --dropout=0.3 --val_interval=5 --val_beamk=2 --val_max_len=24
+v14 - early stopping test, make the patience so ends after >20 epochs, all bleu recall chrf acc were increasing jaggedly, gleu increasing very slowly, precision flattened out and i don't know why
+python train.py --json=data/coco/8k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --decoder_dim=256 --batch=128 --accumulate=1 --epoch=200 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 100 --dropout=0.3 --val_interval=5 --val_beamk=2 --val_max_len=32 --save_top_k=3 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=4
+
+EXPERIMENT 0 - adam vs adamw, use decoder_lr=4e-3 for both, weight_decay is small 1e-4, might try 5e-4 if it helps
+v15 - --opt=adam --decoder_lr=4e-3
+python train.py --json=data/coco/16k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --opt=adam --decoder_lr=4e-3 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.2 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+v16 - --opt=adamw --decoder_lr=4e-3 --weight_decay=1e-4
+python train.py --json=data/coco/16k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --opt=adamw --decoder_lr=4e-3 --weight_decay=1e-4 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.2 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+RESULT - no difference at all, only recall is worse with weight decay
+
+EXPERIMENT 1 - increase the dropout, compare to v15
+v17 - dropout=0.5
+python train.py --json=data/coco/16k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.5 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+RESULT - 0.5 is better than 0.2, all metrics improved except acc recall chrf
+
+EXPERIMENT 2 - effect of the encoder pretrained and finetuned on 16k images and 256 dim decoder
+v18 - from scratch, loss looks the same but other metrics are way lower, captions are not related, the attention masks are ambiguous
+python train.py --json=data/coco/16k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.5 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+v20 - pretrained
+python train.py --json=data/coco/16k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.5 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+v19 - pretrained and encoder_finetune
+python train.py --json=data/coco/16k256.json --seed=42 --workers=6 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_finetune --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.5 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+RESULT - don't train from scratch, encoder_finetune did about the same as from scratch, i think the learning rate was too high finetuning
+
+DEV - added separate learning rates for encoder and decoder
+
+EXPERIMENT 3 - lower the learning rates
+v21 - compare to v20, encoder_lr=1e-5, nice boost in for all metrics
+python train.py --json=data/coco/16k256.json --seed=42 --workers=4 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.5 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+v22 - compare to v21, encoder_lr=1e-5, --decoder_lr=1e-3
+python train.py --json=data/coco/16k256.json --seed=42 --workers=3 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_finetune --encoder_lr=1e-5 --decoder_lr=1e-3 --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.5 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+RESULT - reducing the lr helps with both, decreasing decoder_lr had a larger increase in bleu than decrease encoder_lr
+
+EXPERIMENT 4 - extend exp0 but with encoder_dim=256
+v23 - pretrained, --encoder_dim=256
+python train.py --json=data/coco/16k256.json --seed=42 --workers=3 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_dim=256 --encoder_lr=1e-5 --decoder_lr=1e-3 --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.5 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+v24 - pretrained and finetune, --encoder_dim=256
+python train.py --json=data/coco/16k256.json --seed=42 --workers=3 --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_finetune --encoder_dim=256 --encoder_lr=1e-5 --decoder_lr=1e-3 --embed_dim=256 --decoder_dim=256 --batch=128 --epoch=90 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 75 --dropout=0.5 --val_interval=5 --val_beamk=2 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+RESULT - no improvement, faster training and less ram, bleu scores worse, REDO this with more data and longer training
+
+DEV - added embedding max_norm, arg was missing from before so older checkpoints dont work
+DEV - fix bleu score, remove <START> <END> <PAD>
+DEV - Double the dataset size to 32k256.json, 1600 val
+
+v25 - test 32k, result -> use milestones at 60, end at 90, bleu4=16.93
+python train.py --json=data/coco/32k256.json --seed=42 --workers=4 --encoder_arch=shufflenet_v2_x1_0 --pretrained --decoder_lr=1e-3 --embed_dim=256 --decoder_dim=256 --decoder_tf=always --batch=128 --epoch=100 --grad_clip=value --clip_value=0.5 --scheduler=step --lr_gamma=0.2 --milestones 80 --dropout=0.5 --val_interval=5 --val_beamk=4 --val_max_len=20 --save_top_k=3 --save_monitor=bleu4
+
+DEV - multi layer lstm
+DEV - teacher forcing
+DEV - normalize embeddings
+DEV - bucket sampler
+
+v26 - clip_value=1.0 precision=16 embed_norm=1.0 bucket_sampler, result -> best yet bleu4=19.53
+python train.py --json=data/coco/32k256.json --seed=42 --workers=4 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=128 --epoch=90 --grad_clip=value --clip_value=1.0 --scheduler=step --lr_gamma=0.2 --milestones 60 --dropout=0.5 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+
+DEV - perplexity
+DEV - deep output layer
+
+v27 - grad_clip=norm clip_value=1.0 aug_scale=0.9 milestones=70, result -> eq 7  is worse, belu4=17.03
+python train.py --json=data/coco/32k256.json --seed=42 --workers=5 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=128 --epoch=90 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.2 --milestones 70 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+v28 - clip_value=5.0 result -> bleu4=16.53, increasing clip_value did not help
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=128 --epoch=90 --grad_clip=norm --clip_value=5.0 --scheduler=step --lr_gamma=0.2 --milestones 70 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+
+IDEA - the decoder might be overfitting with the deep output layer
+the decoder might be too powerful and do most of the work, ignores the encoder
+use a smaller decoder, want the encoder to do more work
+
+v29 - decoder_dim=128 milestones=50 epoch=70 clip_value=2.0 result -> smaller decoder made no difference bleu4=17.21
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=always --batch=128 --epoch=70 --grad_clip=norm --clip_value=2.0 --scheduler=step --lr_gamma=0.2 --milestones 50 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+
+IDEA - sample more diverse images for the subst
+reduce the vocab size to 3072, unknown tokens train=2.12% test=2.32% val=2.24%
+
+v30 - clip_value=1.0 milestones=40 epoch=50 result -> works better, bleu4=18.82
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=always --batch=128 --epoch=50 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.2 --milestones 40 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+
+Multi layer test
+v31 - decoder_layers=2 clip_value=1.0 milestones=30 epoch=50
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=14 --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=2 --decoder_tf=always --batch=128 --epoch=50 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.2 --milestones 30 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+RESULT - works just fine, with low data no differences are apparent, bleu4=18.26
+
+DEV - get_encoder to output lower level feature maps, larger spatial size, less features
+
+v32 - try the new get_encoder, results -> bleu4=15.68, not that good, i assume from less high level signals
+half the lr any time bleu4 decreases - --scheduler=plateau --plateau_patience 1 --lr_gamma=0.5 --plateau_monitor=bleu4
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=always --batch=128 --epoch=50 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience 1 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+
+Increase the doubly stochastic attention loss weight
+v33 - decoder_lr=2e-3 att_gamma=2.0
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=2e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=always --batch=128 --epoch=70 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience=0 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=2.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+RESULT - boosts bleu4 in early epochs, no difference after 30 epochs, bleu4=16.41
+
+Increase the batch size using gradient accumulation
+v34 - decoder_lr=2e-3 accumulate=4
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=2e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=always --batch=128 --accumulate=4 --epoch=70 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience=1 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+RESULT - takes longer to improve, more steady upward improvements, bleu4=15.76
+
+change the encoder_size
+v35 - decoder_lr=2e-3 encoder_size=8  
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --encoder_size=8 --embed_dim=256 --embed_norm=1.0 --decoder_lr=2e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=always --batch=128 --accumulate=1 --epoch=70 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience=1 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+RESULT - only slightly worse bleu4=15.50
+
+v36 - 64k images, 2 captions each, 3072 validation, length=24, result - > bleu4=17.29
+python train.py --json=data/coco/128k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=128 --accumulate=1 --epoch=100 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience=2 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+
+DEV - going back to the old get_encoder, less spatial and more features was working fine
+DEV - decoder_tf now uses teacher forcing scheduling
+
+v37 - batch_size=256, compare epoch time to v34, result -> bleu4=18.37, larger batch is slightly faster
+python train.py --json=data/coco/32k256.json --seed=42 --workers=6 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=always --batch=256 --accumulate=1 --epoch=76 --grad_clip=norm --clip_value=1.0 --scheduler=step --milestones 40 --lr_gamma=0.5 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+
+EXPERIMENT 5 - teacher forcing schedule
+v39 - batch_size=512 decoder_tf=inv_sigmoid(0.5), dropout=0.1, result -> bleu4=16.72
+python train.py --json=data/coco/32k256.json --seed=42 --workers=8 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=inv_sigmoid --batch=512 --accumulate=1 --epoch=60 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.5 --milestones 40 55 --dropout=0.1 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+v40 - decoder_tf=inv_sigmoid(0.7), tf for longer, no dropout, result -> longer with tf is better, bleu4=20.28
+python train.py --json=data/coco/32k256.json --seed=42 --workers=10 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=inv_sigmoid --batch=512 --accumulate=1 --epoch=70 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.5 --milestones 40 60 --dropout=0.0 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4
+v41 - decoder_tf=inv_sigmoid(0.8), dropout=0.2, result -> bleu4=20.65
+python train.py --json=data/coco/32k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=inv_sigmoid --batch=512 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.5 --milestones 40 60 --dropout=0.2 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=4
+v42 - decoder_tf=inv_sigmoid(1.0),  dropout=0.5, result -> bleu4=21.79
+python train.py --json=data/coco/32k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=inv_sigmoid --batch=512 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.5 --milestones 40 60 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=4
+v43 - decoder_tf=inv_sigmoid(1.2), result -> bleu4=22.06
+python train.py --json=data/coco/32k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=inv_sigmoid --batch=512 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.5 --milestones 40 60 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=4
+v44 - decoder_tf=always, result -> bleu4=20.27
+python train.py --json=data/coco/32k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --decoder_tf=always --batch=512 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.5 --milestones 40 60 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=4
+v45 - CONTROL, decoder_tf=None, result -> bleu4=8.11
+python train.py --json=data/coco/32k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=128 --decoder_layers=1 --batch=512 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=1.0 --scheduler=step --lr_gamma=0.5 --milestones 40 60 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=24 --save_top_k=3 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=4
+RESULT - v39-v43 peak validation bleu4 at epsilon~0.5, set b=epochs to achieve this
+
+MISC TESTING
+102400 training pairs, maximum captions per image if they are not over max_cap_len,
+5k validation and test images
+
+v46 - plateau schedule, result -> bleu4=19.93
+python train.py --json=data/coco/76k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=512 --accumulate=1 --epoch=150 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience 3 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=4 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v47 - more data, decoder_lr=2e-3, result -> bleu4=20.26
+python train.py --json=data/coco/100k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=512 --accumulate=1 --epoch=150 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience 3 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=4 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v48 - clip_value=2.0 result -> bleu4=20.76
+python train.py --json=data/coco/102k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=512 --accumulate=1 --epoch=150 --grad_clip=norm --clip_value=2.0 --scheduler=plateau --plateau_patience 2 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=2 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v49 - accumulate=2 result -> bleu4=21.96
+python train.py --json=data/coco/102k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=512 --accumulate=2 --epoch=150 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience 2 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=2 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v50 - decoder_lr=1e-2 accumulate=4 clip_value=5.0 result -> bleu4=20.88
+python train.py --json=data/coco/102k256.json --seed=42 --workers=10 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-2 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=512 --accumulate=4 --epoch=150 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience 2 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=2 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=5
+v51 - decoder_lr=2e-3 accumulate=2, higher lr than v49, result -> bleu4=21.59
+python train.py --json=data/coco/102k256.json --seed=42 --workers=10 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x1_0 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --batch=512 --accumulate=2 --epoch=100 --grad_clip=norm --clip_value=1.0 --scheduler=plateau --plateau_patience 2 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+
+DEV - learning rate warmup
+DEV - label smoothing
+
+v52 - lr_warmup_steps=500 label_smoothing=0.1 decoder_lr=4e-3 clip_value=5.0, result -> bleu4=19.53
+python train.py --json=data/coco/102k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=4e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --lr_warmup_steps=500 --batch=512 --accumulate=2 --epoch=60 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience=1 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --label_smoothing=0.1 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v53 - decoder_lr=1e-3 opt=adamw weight_decay=1e-5 lr_gamma=0.2, result -> bleu4=21.09
+python train.py --json=data/coco/102k256.json --seed=42 --workers=10 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=500 --batch=512 --accumulate=2 --epoch=60 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience=1 --lr_gamma=0.2 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --label_smoothing=0.1 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+weight decay may have helped, but dropping the lr by 0.2 helped more
+
+DEV - embedding learning rate
+
+v54 - embedding_lr=1e-2 weight_decay=1e-4, result -> bleu4=21.19
+python train.py --json=data/coco/102k256.json --seed=42 --workers=10 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=1.0 --embedding_lr=1e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-4 --lr_warmup_steps=500 --batch=512 --accumulate=2 --epoch=70 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience=1 --lr_gamma=0.2 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --label_smoothing=0.1 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+result - higher lr on embeddings helps later in training, early the improvements are slow
+
+IDEA - using smaller batch size to get more update steps, also more data
+128000 images
+v55 - embedding_lr=5e-2 weight_decay=4e-5 accumulate=1, result -> bleu4=19.79, interrupted
+python train.py --json=data/coco/128k256.json --seed=42 --workers=10 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=1.0 --embedding_lr=5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=4e-5 --lr_warmup_steps=500 --batch=512 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience=2 --lr_gamma=0.2 --plateau_monitor=bleu4 --dropout=0.5 --aug_scale=0.9 --label_smoothing=0.1 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+result - stopped by me bc the bleu was increase so slowly the plateau scheduler never dropped the lr
+
+IDEA - remove the embedding from the deep output
+decrease the vocab to 2048 (~4% unknown across splits)
+DEV - optional deep output
+
+v56 - embedding_lr=2.5e-2 accumulate=2 w/o deep_output, result -> bleu4=21.73
+python train.py --json=data/coco/128k256.json --seed=42 --workers=10 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=4e-5 --lr_warmup_steps=500 --batch=512 --accumulate=2 --epoch=60 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 40 50 --lr_gamma=0.2 --dropout=0.5 --aug_scale=0.9 --label_smoothing=0.1 --att_gamma=1.0 --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+result - unclear if w/o deepout is better, lower accuracy, perplexity was worse once lr dropped
+v57 - embed_norm=2.0 lr_warmup_steps=800 lr_gamma=0.4 deep_output, result -> bleu4=21.45
+python train.py --json=data/coco/128k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=2.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=4e-5 --lr_warmup_steps=800 --batch=512 --accumulate=2 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 45 70 --lr_gamma=0.4 --dropout=0.5 --aug_scale=0.9 --label_smoothing=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+result - use deep_output, initial better w deep_output but slows down and doesnt peak as high until below lr=2e-4
+
+180k256, 180224 images, 2560 vocab, batch=1024 is 176 steps
+IDEA - drop the lr after step milestones for more consistent comparisons
+drop atsteps  4000 6500 7500, epochs 23 37 43 end at 45
+use a lower lr_gamma
+v58 - lr_gamma=0.1 dropout=0.15, result -> bleu4=23.06
+python train.py --json=data/coco/180k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=2.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=4e-5 --lr_warmup_steps=800 --batch=512 --accumulate=2 --epoch=45 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 23 37 43 --lr_gamma=0.1 --dropout=0.15 --aug_scale=0.9 --label_smoothing=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+result - good, dropping the lr to lower gave best performance, need more steps at lower lr
+
+trying again with more steps at low lr and more dropout
+steps 4000 7000 9000, epochs 23 40 51 end at 55
+v59 - dropout=0.3, result -> bleu4=23.07 new best barely
+python train.py --json=data/coco/180k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=2.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=4e-5 --lr_warmup_steps=800 --batch=512 --accumulate=2 --epoch=55 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 23 40 51 --lr_gamma=0.1 --dropout=0.3 --aug_scale=0.9 --label_smoothing=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+result - more steps helped but more dropout did not
+
+dev - add augmenation arguments
+
+EXPERIMENT 6 - optical transforms, compare to v58
+when finetuning i have to drop the batch_size=256 accumulate=4
+v60 - aug_optical_strength=0.0 encoder_finetune, result -> bleu4=23.87
+python train.py --json=data/coco/180k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=2.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=4e-5 --lr_warmup_steps=800 --batch=256 --accumulate=4 --epoch=45 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 23 37 43 --lr_gamma=0.1 --dropout=0.15 --aug_scale=0.9 --aug_optical_strength=0.0 --label_smoothing=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v61 - aug_optical_strength=0.2, result -> bleu4=21.90
+python train.py --json=data/coco/180k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=2.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=4e-5 --lr_warmup_steps=800 --batch=512 --accumulate=2 --epoch=45 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 23 37 43 --lr_gamma=0.1 --dropout=0.15 --aug_scale=0.9 --aug_optical_strength=0.2 --label_smoothing=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v62 - aug_optical_strength=0.2  encoder_finetune, result -> bleu4=23.71
+python train.py --json=data/coco/180k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=2.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=4e-5 --lr_warmup_steps=800 --batch=256 --accumulate=4 --epoch=45 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 23 37 43 --lr_gamma=0.1 --dropout=0.15 --aug_scale=0.9 --aug_optical_strength=0.2 --label_smoothing=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+RESULTS - no optical did better with finetuning, finetune and optical is best
+
+EXPERIMENT 7 - label_smoothing, less weight_decay
+128k256, 128000 images, 2048 vocab, batch=1024 is 125 steps
+epochs 26 34 43 end at 45
+fixed pretrained encoder, a little cropping and colorjitter
+weight_decay=1e-5, reduced to see if label smoothing is a good regularizer
+python train.py --json=data/coco/128k256.json --seed=42 --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embed_norm=2.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=800 --batch=512 --accumulate=2 --epoch=45 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 26 34 43 --lr_gamma=0.1 --dropout=0.15 --label_smoothing=0.0 --aug_scale=0.95 --aug_color_jitter=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v63 - label_smoothing=0.0, result -> bleu4=22.34
+v64 - label_smoothing=0.05, result -> bleu4=22.58
+v65 - label_smoothing=0.1, result -> bleu4=22.74
+v66 - label_smoothing=0.2, result -> bleu4=22.82
+v67 - label_smoothing=0.4, result -> bleu4=23.18
+v68 - label_smoothing=0.6, result -> bleu4=22.68
+
+v69 - hard-coded change to get shufflenet encoder without the final 1x1 conv
+python train.py --json=data/coco/128k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --embed_dim=256 --embedding_lr=2.5e-2 --embed_norm=1.0 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=800 --batch=512 --accumulate=2 --epoch=45 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 26 34 43 --lr_gamma=0.1 --dropout=0.15 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+result - don't do this
+
+EXPERIMENT 8 - decoder_tf with encoder_finetune
+205k256, 204800 images, 2048 vocab, batch=1024 is 200 steps
+--aug_color_jitter=0.2 --aug_optical_strength=0.2 --label_smoothing=0.3
+v70 - decoder_tf=always, result -> bleu4=23.79
+python train.py --json=data/coco/205k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=800 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience 2 --lr_gamma=0.1 --plateau_monitor=bleu4 --dropout=0.15 --label_smoothing=0.3 --aug_scale=0.9 --aug_color_jitter=0.2 --aug_optical_strength=0.2 --att_gamma=1.0 --deep_output --val_interval=2 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+epochs 26 54 62 end at 68
+v71 - decoder_tf=inv_sigmoid, scheduler=step to match lr in v70, result -> bleu4=24.08
+python train.py --json=data/coco/205k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=800 --batch=256 --accumulate=4 --epoch=68 --grad_clip=norm --clip_value=5.0 --scheduler=step --milestones 26 54 62 --lr_gamma=0.1 --dropout=0.15 --label_smoothing=0.3 --aug_scale=0.9 --aug_color_jitter=0.2 --aug_optical_strength=0.2 --att_gamma=1.0 --deep_output --val_interval=4 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=6
+v72 - decoder_tf=inv_sigmoid scheduler=plateau embed_norm=1.0 dropout=0.3 label_smoothing=0.2
+python train.py --json=data/coco/205k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=800 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience 1 --lr_gamma=0.1 --plateau_monitor=bleu4 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=4 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=3
+result -> bleu4=24.61 !!!! best
+v73 - embedding_lr=1e-2 lr_warmup_steps=600 scheduler=exp lr_gamma=0.9 label_smoothing=0.4
+python train.py --json=data/coco/205k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=1e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=600 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=exp --lr_gamma=0.9 --dropout=0.3 --label_smoothing=0.4 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=4 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=3
+result -> bleu4=22.88
+v74 - scheduler=cosine, result -> bleu4=24.54
+python train.py --json=data/coco/205k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=600 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=4 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=12
+DEV - fix cosine to end at low lr
+
+32k256, 32768 images, 2048 vocab, batch=1024 is 32 steps, 1536 validation
+v75 - cosine with 2 restarts, batch=256 accumulate=2 decoder_tf=always, result->bleu4=20.30
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --batch=256 --accumulate=2 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1000 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+v76 - cosine with 1 restart, epoch=70 accumulate=4, result->bleu4=19.85
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --batch=256 --accumulate=4 --epoch=70 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=2e3 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+v77 - 0 restart just cosine annealing, decoder_tf=inv_sigmoid epoch=80, result->bleu4=19.86
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --batch=256 --accumulate=4 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e3 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+v78 - 0 restart, decoder_lr=2e-3 decoder_tf=always epoch=80, result->bleu4=19.99
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --batch=256 --accumulate=4 --epoch=70 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e3 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+v79 - 0 restart, decoder_lr=1e-3 dropout=0.5, result->bleu4=19.95
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --batch=256 --accumulate=4 --epoch=70 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e3 --cosine_multi=2 --min_lr=1e-8 --dropout=0.5 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+
+No restarts is fine for small models
+More restarts needs a lot more steps to get good results
+
+v80 - compare to v78, input_size=192, result->bleu4=19.02
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --batch=256 --accumulate=4 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+v81 - compare to v78, input_size=160, result->bleu4=19.47
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=160 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --batch=256 --accumulate=4 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+
+v82 - decoder_lr=1e-3 --adam_b1=0.8 --adam_b2=0.999, result->bleu4=20.26
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --adam_b1=0.8 --adam_b2=0.999 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+v83 - --adam_b1=0.9 --adam_b2=0.999, result->bleu4=20.20
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+reducing the first momentum beta to 0.8 had a dramatic impact on this small model
+DEV - encoder_finetune_after
+v84 - adam_b1=0.5, result->bleu4=19.20
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --encoder_finetune_after=0 --encoder_lr=1e-5 --embed_dim=256 --embed_norm=1.0 --embedding_lr=2.5e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=100 --adam_b1=0.5 --adam_b2=0.999 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-8 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=20 --save_top_k=1 --save_monitor=bleu4
+
+DEV - pretrained glove embeddings
+
+v85 - 32k256_glove200 embedding_lr=1e-5 embed_norm=None, result->bleu4=20.10
+python train.py --json=data/coco/32k256_glove200.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v86 - 32k256_glove200 embedding_lr=1e-5 embed_norm=1.0, result->bleu4=19.44
+python train.py --json=data/coco/32k256_glove200.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embed_norm=1.0 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v87 - 32k256 embed_dim=200 embedding_lr=2e-2 embed_norm=None, result->bleu4=17.91
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=2e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v88 - 32k256 embed_dim=200 embedding_lr=2e-2 embed_norm=1.0, result->bleu4=19.85
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embed_norm=1.0 --embedding_lr=2e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v89 - 32k256_glove100, result->bleu4=19.18
+python train.py --json=data/coco/32k256_glove100.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v90 - 32k256 embed_dim=100 embed_norm=1.0, result->bleu4=19.18
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=100 --embed_norm=1.0 --embedding_lr=2e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v91 - 32k256_glove300, result->bleu4=19.34
+python train.py --json=data/coco/32k256_glove300.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v92 - 32k256 embed_dim=300 embed_norm=1.0, result->bleu4=19.97
+python train.py --json=data/coco/32k256.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=300 --embed_norm=1.0 --embedding_lr=2e-2 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+RESULTS - non-normalize glove and normalized from scratch perform equally well
+
+Manually entered temperature scaling value
+Decreasing temp "sharpens" the dist, so lower value means the original dist is not sharp
+Higher value means the model has more "confidence" in its dist
+v85 - 0.8580
+v88 - 0.8540
+v89 - 0.8394
+v90 - 0.8377
+v91 - 0.8751
+v92 - 0.8604
+
+try a different schedule
+v93 - 32k256_glove300 cosine_iterations=5e3 1 restart, result->bleu4=19.31
+python train.py --json=data/coco/32k256_glove300.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+DEV - add new dimension to represent which embeddings are pretrained
+v94 - same as v93 with padded pretrained embedding, result->bleu4=19.00
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+adding the extra zero padding helps drop the perplexity a little
+
+v95 - v94 without deep_output, result->bleu4=20.35
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --val_interval=20 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+the bleu scores are great, the accuracy is not
+on the hold out test set it gets a lot wrong and ignores the image
+
+try a new validation on a random subset of 20% every 5 epochs
+v96 - decoder_lr=4e-4 accumulate=2 label_smoothing=0.3, result->bleu4=21.55
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=4e-4 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=2 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e3 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.3 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+the subset of validation gives decent indication of metrics
+the batch size was to small, larger batch size is better
+
+try larger batch size with a slightly lower learning rate
+v97 - decoder_lr=5e-4 accumulate=4 label_smoothing=0.3, result->bleu4=21.46
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=5e-4 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.2 --label_smoothing=0.3 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+
+DEV - one_cycle lr schedule, no momentum schedule
+DEV upgrade to pytorch 1.9 and cuda11
+
+v98 - decoder_lr=1e-3 scheduler=one_cycle label_smoothing=0.2, result->bleu4=19.01
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=one_cycle --dropout=0.2 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+try again with a higher peak lr and earlier
+v99 - decoder_lr=2e-3 scheduler=one_cycle one_cycle_pct=0.2 label_smoothing=0.15, result->bleu4=17.99
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=one_cycle --one_cycle_pct=0.2 --dropout=0.2 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v100 - decoder_lr=1e-3 label_smoothing=0.3, result->bleu4=19.36
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=one_cycle --one_cycle_pct=0.2 --dropout=0.2 --label_smoothing=0.3 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v101 - decoder_lr=1e-3 dropout=0.5 label_smoothing=0.3, result->bleu4=18.68
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=one_cycle --one_cycle_pct=0.2 --dropout=0.5 --label_smoothing=0.3 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v102 - decoder_lr=2e-3 one_cycle_pct=0.1 dropout=0.2 label_smoothing=0.2, result->bleu4=18.37
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=one_cycle --one_cycle_pct=0.1 --dropout=0.2 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+
+try the 512 size model with same lr and dropout
+v103 - decoder_dim=512 decoder_lr=1e-3, result->bleu4=19.04
+python train.py --json=data/coco/32k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=140 --grad_clip=norm --clip_value=5.0 --scheduler=one_cycle --one_cycle_pct=0.1 --dropout=0.2 --label_smoothing=0.3 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+
+time to use more data, a few less epochs, 100 epochs
+51k256_glove300e, 51200 train, 2048 val, maxlen 24
+50 steps with batch=1024, 200 dataloader steps
+
+v104 - v97 w decoder_dim=512, result->bleu4=20.10
+python train.py --json=data/coco/51k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=5e-4 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.2 --label_smoothing=0.3 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+v105 - decoder_lr=1e-3 dropout=0.5, result->bleu4=21.51
+python train.py --json=data/coco/51k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.3 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+v106 - label_smoothing=0.0, result->bleu4=20.31
+python train.py --json=data/coco/51k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=192 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.0 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+
+DEV - reduce time by loading the image once and using all captions in the same pass
+
+v107 - label_smoothing=0.2 batch=64, result->bleu4=21.89
+python train.py --json=data/coco/10k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=64 --accumulate=4 --epoch=100 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.2 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+bleu score increased above 20 with less steps
+my guess is images with more diverse captions was more beneficial than diverse images with less captions
+
+double the amount of images, 2048->3072 vocab
+20k256_glove300e, 20480 images, 3072 vocab
+epoch=50
+v108 - label_smoothing=0.15 batch=128 accumulate=4 lr_warmup_steps=400, result->bleu4=21.76
+python train.py --json=data/coco/20k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=400 --adam_b1=0.8 --batch=128 --accumulate=4 --epoch=50 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=4 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=10
+v109 - batch=256 accumulate=1, result->bleu4=21.60
+python train.py --json=data/coco/20k256_glove300e.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=1 --epoch=50 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+
+41k256_glove300e_#v, 40960 images, 3.6M tokens, # vocab
+epoch=80 batch=256 accumulate=1 (160 steps per epoch)
+v110 - 5120 words, result-> OOM error
+python train.py --json=data/coco/41k256_glove300e_5120v.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+v111 - 4096 words, result->bleu4=24.11
+python train.py --json=data/coco/41k256_glove300e_4096v.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+v112 - 3072 words, result->bleu4=24.80
+python train.py --json=data/coco/41k256_glove300e_3072v.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+v113 - 2048 words, result->bleu4=23.61
+python train.py --json=data/coco/41k256_glove300e_2048v.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+v114 - 1024 words, result->bleu4=24.28
+python train.py --json=data/coco/41k256_glove300e_1024v.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+
+use best above with decoder_tf=always
+v115 - compare to v112, 3072 words, result->bleu4=24.29
+python train.py --json=data/coco/41k256_glove300e_3072v.json --workers=12 --precision=16 --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --input_size=224 --pretrained --encoder_finetune_after=2500 --encoder_lr=1e-5 --embed_dim=200 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=always --opt=adamw --weight_decay=1e-5 --lr_warmup_steps=200 --adam_b1=0.8 --batch=256 --accumulate=1 --epoch=80 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.95 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_beamk=3 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=8
+this did worse for bleu, lower perplexity and loss
+
+i tried to use workers=16, but there was a pagination error or something during validation
+failed with workers=12, one worker might be filling the gpu memory with a large batch
+reduced batch to 224
+v118 - first full run with cosine schedule, no weight_decay, result->bleu4=24.43
+python train.py --json=data/coco/full_glove200e_4096v.json --workers=12 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=4000 --encoder_lr=1e-6 --embed_dim=300 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=224 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=2e4 --cosine_multi=2 --min_lr=1e-9 --dropout=0.3 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.2 --aug_optical_strength=0.2 --att_gamma=1.0 --deep_output --val_interval=1 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=40
+
+ w deep_output = 7.6M (1.2M)
+wo deep_output = 8.5M (2.1M)
+decoder_tf_min=0.9
+increase min_lr from 1e-9 to 1e-7
+v119 - full run, no deep_output, result->bleu4=24.77
+python train.py --json=data/coco/full_glove200e_4096v.json --workers=12 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=4000 --encoder_lr=1e-6 --embed_dim=300 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.9 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=224 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=2e4 --cosine_multi=2 --min_lr=1e-7 --dropout=0.3 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.2 --aug_optical_strength=0.2 --att_gamma=1.0 --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=20
+highest bleu4 yet
+bleu4 fell off when tf decreased, min_lr was too low
+
+decoder_tf_min=0.92
+increase min_lr from 1e-7 to 1e-6
+no restarts, aug_optical_strength=0.1, epoch=160
+v120 - w deep_output, result->bleu4=23.77
+python train.py --json=data/coco/full_glove200e_4096v.json --workers=12 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-6 --embed_dim=300 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.92 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=224 --accumulate=1 --epoch=160 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e5 --cosine_multi=2 --min_lr=1e-6 --dropout=0.3 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.2 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=20
+
+no restarts didnt do so well, increase back to 200 epochs
+v121 - dropout=0.4, result->bleu4=24.12
+python train.py --json=data/coco/full_glove200e_4096v.json --workers=12 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-6 --embed_dim=300 --embedding_lr=1e-5 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.93 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=224 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e5 --cosine_multi=2 --min_lr=1e-6 --dropout=0.4 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.2 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=20
+
+appears that lr less than 2e-5 is what is making the blue4 decrease
+not sure if higher min_lr or more dropout helped, keeping more dropout
+increase min_lr from 1e-6 to 2e-5
+embedding_lr = 1e-4->1e-3
+encoder_lr = 1e-6->1e-5
+3 restarts
+v122 - dropout=0.4, result->bleu4=23.72
+python train.py --json=data/coco/full_glove200e_4096v.json --workers=12 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-5 --embed_dim=300 --embedding_lr=1e-3 --decoder_lr=1e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.93 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=224 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=25e3 --cosine_multi=1 --min_lr=2e-5 --dropout=0.4 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.2 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=20
+
+
+try using plateau scheduler on bleu4
+higher lr for longer seems to be the best
+decoder_lr = 1e-3->2e-3
+encoder_lr = 1e-5->1e-4
+random embedding init
+batch=192
+v123 - dropout=0.4, result->bleu4=23.42
+python train.py --json=data/coco/full_4096v.json --workers=12 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-4 --embed_dim=208 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.93 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=192 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience 10 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.4 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=20
+from random had the lowest perplexity, and the lowest bleu4 at nearly ever epoch
+the plateau and early stop were fine
+
+v124 - v123 but with glove200, result->bleu4=24.84
+dropout 0.4->0.5
+python train.py --json=data/coco/full_glove200e_4096v.json --workers=12 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-4 --embed_dim=208 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.93 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=192 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=plateau --plateau_patience 10 --lr_gamma=0.5 --plateau_monitor=bleu4 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4 --early_stop_monitor=bleu4 --early_stop_patience=20
+
+full256_glove300e_5120v - len=40
+test bias on beta gate
+v124 but with v119 schedule, 1 restart
+increase to glove300
+batch=160
+v125 - no bias, random normal init, result->bleu4=24.08
+python train.py --json=data/coco/full256_glove300e_5120v.json --workers=12 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-4 --embed_dim=304 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.9 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=160 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=3e4 --cosine_multi=2 --min_lr=2e-5 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+v126 - bias fill 1/fan_in, result->bleu4=23.67 stopped early
+python train.py --json=data/coco/full256_glove300e_5120v.json --workers=12 --gpus 0 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-4 --embed_dim=304 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.9 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=160 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=3e4 --cosine_multi=2 --min_lr=2e-5 --dropout=0.5 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+higher accuracy and lower loss, but the bleu4 was not as high with the positive bias
+
+increased the validation batch
+encoder_finetune_after=10000->40000
+min_lr=2e-5->1e-4
+dropout=0.5->0.2
+v127 - result->bleu4=23.32 stopped early
+python train.py --json=data/coco/full256_glove200e_5120v.json --workers=12 --gpus 0 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=40000 --encoder_lr=1e-4 --embed_dim=208 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=512 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.9 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=192 --accumulate=1 --epoch=200 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=3e4 --cosine_multi=2 --min_lr=1e-4 --dropout=0.2 --label_smoothing=0.15 --aug_scale=0.8 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=2 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+
+back to using less data
+epochs=200->400
+encoder_finetune_after=40000->10000
+aug_scale=0.8->0.9
+min_lr=1e-4->4e-5
+decoder_dim=512->256
+cosine_iterations=3e4->5e3
+embed_dim=208
+embedding_dropout=0.2
+v128 - result->bleu4=20.99
+python train.py --json=data/coco/20k256_3072v.json --workers=12 --gpus 0 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-4 --embed_dim=208 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.9 --opt=adam --lr_warmup_steps=200 --adam_b1=0.8 --batch=160 --accumulate=1 --epoch=400 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=5e3 --cosine_multi=2 --min_lr=4e-5 --dropout=0.2 --embedding_dropout=0.2 --label_smoothing=0.15 --aug_scale=0.9 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=10 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+
+epoch=400->300
+adam_b1=0.8->0.9
+adam_b2=0.999->0.98
+decoder_tf_min=0.9->0.93
+v129 - result->bleu4=20.52
+python train.py --json=data/coco/20k256_3072v.json --workers=12 --gpus 0 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-4 --embed_dim=208 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.93 --opt=adam --lr_warmup_steps=200 --adam_b1=0.9 --adam_b2=0.98 --batch=160 --accumulate=1 --epoch=300 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e4 --cosine_multi=2 --min_lr=4e-5 --dropout=0.2 --embedding_dropout=0.2 --label_smoothing=0.15 --aug_scale=0.9 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+if forgot to set embed_norm
+
+v130 - v129 with glove, result->bleu4=21.24
+python train.py --json=data/coco/20k256_glove200e_3072v.json --workers=12 --gpus 0 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-4 --embed_dim=208 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.93 --opt=adam --lr_warmup_steps=200 --adam_b1=0.9 --adam_b2=0.98 --batch=160 --accumulate=1 --epoch=300 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e4 --cosine_multi=2 --min_lr=4e-5 --dropout=0.2 --embedding_dropout=0.2 --label_smoothing=0.15 --aug_scale=0.9 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+
+v131 - --weight_tying, result->bleu4=21.53
+python train.py --json=data/coco/20k256_glove200e_3072v.json --workers=12 --gpus 0 --precision=16 --benchmark --bucket_sampler --encoder_arch=shufflenet_v2_x0_5 --pretrained --input_size=224 --encoder_finetune_after=10000 --encoder_lr=1e-4 --embed_dim=208 --embedding_lr=1e-3 --decoder_lr=2e-3 --decoder_dim=256 --decoder_layers=1 --decoder_tf=inv_sigmoid --decoder_tf_min=0.93 --opt=adam --lr_warmup_steps=200 --adam_b1=0.9 --adam_b2=0.98 --batch=160 --accumulate=1 --epoch=300 --grad_clip=norm --clip_value=5.0 --scheduler=cosine --cosine_iterations=1e4 --cosine_multi=2 --min_lr=4e-5 --dropout=0.2 --embedding_dropout=0.2 --label_smoothing=0.15 --weight_tying --aug_scale=0.9 --aug_color_jitter=0.1 --aug_optical_strength=0.1 --att_gamma=1.0 --deep_output --val_interval=5 --val_percent=1.0 --val_beamk=5 --val_max_len=32 --save_top_k=1 --save_monitor=bleu4
+
+encoder_finetune_after=10000->30000
+val_beamk=5->3
+dropout=0.5
+
+sgd = --opt=sgd --weight_decay=1e-4 --momentum=0.8 --nesterov
+asgd = 
+adam = --opt=adam --adam_b1=0.9 --adam_b2=0.999
+
+--scheduler=plateau --plateau_patience=1 --lr_gamma=0.1 --plateau_monitor=bleu4
+
+

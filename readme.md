@@ -24,7 +24,7 @@ Original Source Code. kelvinxu, arctic-captions (https://github.com/kelvinxu/arc
 
 Create a new conda environment
 ```
-conda create --name pytorch
+conda create --name pytorch python=3.9
 ```
 
 ```
@@ -308,9 +308,107 @@ models with size 128, 256, 512
 
 ## Good Predictions
 
+![](/data/readme/predictions/COCO_val2014_000000063602_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000293810_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000366630_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000324250_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000069946_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000234902_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000301837_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000442942_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000462026_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000576566_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000100848_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000369541_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000135210_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000458567_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000036501_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000548538_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000571990_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000177015_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000519611_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000264347_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000147915_result.jpg)
+
+![](/data/readme/predictions/test_COCO_val2014_000000296236.png)
+
+![](/data/readme/predictions/test_COCO_val2014_000000275202.png)
+
+![](/data/readme/predictions/test_COCO_val2014_000000373846.png)
+
 ## Inaccurate Predictions
 
+![](/data/readme/predictions/COCO_val2014_000000558235_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000006896_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000058492_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000100594_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000273772_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000337705_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000002753_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000082933_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000042526_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000067122_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000422200_result.jpg)
+
 ## Funny Predictions
+
+![](/data/readme/predictions/COCO_val2014_000000306664_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000209868_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000136117_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000408364_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000079369_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000045434_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000039009_result.jpg)
+
+![](/data/readme/predictions/COCO_val2014_000000001425_result.jpg)
+
+![](/data/readme/predictions/test_COCO_val2014_000000024343.png)
+
+![](/data/readme/predictions/test_COCO_val2014_000000235836.png)
+
+![](/data/readme/predictions/test_COCO_val2014_000000001573.png)
+
+![](/data/readme/predictions/test_COCO_val2014_000000262175.png)
+
+![](/data/readme/predictions/test_COCO_val2014_000000553678.png)
+
+![](/data/readme/predictions/test_COCO_val2014_000000504811.png)
 
 
 # References

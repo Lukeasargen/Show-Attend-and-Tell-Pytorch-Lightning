@@ -1,0 +1,200 @@
+DONE
+get pretrained torch vision models
+norm for imagenet pretrained
+download data - MSCOCO '14 Dataset
+http://images.cocodataset.org/zips/train2014.zip
+http://images.cocodataset.org/zips/val2014.zip
+http://cs.stanford.edu/people/karpathy/deepimagesent/caption_datasets.zip
+create the dataset and dataloaders
+preproces the text data
+start end pad tokens
+tensor is integer
+padding to length
+make encoder
+get the 14x14 by 512 annotations
+emeddings
+make the lstm
+training step
+mean context vector
+captioning with beam search
+soft attention
+doubly stochastic loss, att_gamma
+accuracy at each step
+encoder_dim=None uses pretrained features
+bleu gleu chrf from nltk
+validation interval
+separate learning rates for encoder and decoder
+normalize the embeddings
+mult layer lstm
+decoder teacher forcing
+bucket_sampler - 4.3 Training, homogenous batch lengths, batch by caption length to speed up training
+deep output - equation 7
+perplexity score
+decoder_tf= None, always, linear, inv_sigmoid, exp
+temperature scaling validation
+lr warmup
+label smoothing
+visualize the word embeddings - on tensorboard
+embedding learning rate
+optional deep output
+augmentation args
+add cosine lr
+fix get_encoder for different input_size
+add noise to inputs/hidden at each step, decrease noise at each step, base_noise/step, pass guassian vectors to see the variance scales, can noise be higher than this?
+sampling using multinomial instead of beam search
+encoder_finetune_after, will keep the encoder frozen until this many steps
+pretrained embeddings, json should include which embedding was used to tokenize, extraced the needed glove embeddings and save a numpy array
+add new dimension to pretrained when adding more tokens, pad 0 for pretrained and random normal vector
+validation on random % to save time
+add one cycle lr schedule
+upgrade to pytorch 1.9.0 bc they fixed adamw, also trying cuda11 instead of cuda10
+only load image once, use all captions in the same forward/backward pass
+topk random sampling
+bucket sampler uses total sum of targets to sort
+save a checkpoint at every cosine lr restart
+embedding_dropout
+weight tying
+factorize init_lstm and output to save parameters
+Allow non sqaure inputs, keep the attention maps as 2d tensors
+Cite weight tying
+
+
+
+dev commands
+python train.py --json=data/coco/64s256.json --batch=1 --epoch=4 --scheduler=step --milestones 2 4 --lr_gamma=0.5
+--decoder_tf=inv_sigmoid
+--val_interval=2
+--scheduler=step --milestones 2 4 --lr_gamma=0.5
+
+python train.py --json=data/coco/64s256.json --decoder_layers=2 --decoder_dim=128 --decoder_tf=always --batch=10 --epoch=8
+--val_interval=2
+
+python train.py --json=data/coco/1k256.json --workers=6 --pretrained --bucket_sampler --decoder_tf=always --batch=128 --lr_warmup_steps=10 --epoch=40 --val_interval=60 --scheduler=cosine --cosine_iterations=9 --cosine_multi=2 --min_lr=1e-6 --accumulate=2
+
+python train.py --json=data/coco/1k256.json --workers=12 --pretrained --encoder_finetune_after=1100 --bucket_sampler --decoder_tf=always --batch=64 --lr_warmup_steps=10 --epoch=100 --val_interval=20 --accumulate=1
+
+test with 5 restarts
+python train.py --json=data/coco/1k256.json --workers=0 --pretrained --bucket_sampler --decoder_dim=128 --decoder_tf=always --batch=128 --lr_warmup_steps=10 --epoch=40 --val_interval=1 --scheduler=cosine --cosine_iterations=9 --cosine_multi=2 --min_lr=2e-5
+
+
+python train.py --json=data/coco/128s_1024v.json --decoder_layers=1 --decoder_dim=128 --decoder_tf=always --batch=32 --epoch=10 --val_interval=1
+
+
+
+EXPERIMENTS
+Weigtht Tying vs none
+pretrained vs none,  embed_norm 1 2
+Vocab dim 56 104 208 304
+Vocab size 3072 4096 5120
+
+sgd asgd, lr=1e-2, what weight_decay for rnn w sgd
+adam 
+adam_b1=0.0 adam_b2=0.999, no ema, closer to RMSprop
+adamw, what weight_decay w adamw
+
+loss CE, FL, CE+FL
+decoder_layers 1 2
+AR & TAR
+
+
+Now experiments with different input resolutions
+attention_dim 128 256
+best with *flattened.shape[1]**-0.5
+run evaluate on both for different dimensions
+also use temperature scaling
+
+evaluation on different input resolutions
+scaled vs non-scaled
+resolution 128, 160, 192, 224, 256, 288, 320, 352, 384
+shape square vs full
+
+
+TODO
+
+fix visual input prepare function
+resize to visual_size, smallest edge this length
+quantize both sizes to 16, crop then resize
+
+update pytorch-lightning
+which version of python, on readme
+update pytorch
+
+new eval script
+add resolution, shape flexibility
+effect of batch size on the val bleu4 scores
+use my_bleu to output the whole eval set nom/dem
+add the val_epoch_end, sum the nom/dem
+use my_bleu to get bleu1-4 without recomputing everything
+move cosine sim to a scoring script
+gleu score from paper
+
+embedding nearest neightbor
+search for embedding in bookmarks
+
+2017-08 regularizering and optimizing lstm langauge model
+
+add asgd
+what lr for sgd, 1e-2
+lr=30 grad_clip=norm clip_value=0.25
+Non-monotonically triggered ASGD
+
+
+uniform init the non glove vectors
+randum uniform init -0.1,0.1
+
+https://github.com/PetrochukM/PyTorch-NLP - has Glove class
+glove vectors are quite large
+scale them at init
+divide by 2 or 4
+the large scale means there could be gaps in the search space
+run glove, glove/2, glove/4 with adam
+
+read the paper 2017-08 Revisiting Activation Regularization for Language RNNs
+cite paper on readme
+add to papernotes
+activation regularization
+which layers of network
+add args
+AR=2 TAR=1
+
+conditional caption length
+use attention-all-you-need like embedding for length
+instead of start token, use sin and cos 
+this is not learnable, could mess up embeddings
+
+neural cache model, grave et al 2016
+mentioned in 2017-08 regularizering
+greatly improves the perplexity
+
+prefix the caption during generation
+
+Better tokenizer
+torchtext has SentencePiece model, including unigram, bpe, char, word
+Do subword tokenizers work well with LSTM?
+punctuation?
+eg. air plane or airplane, skate board or skateboard
+
+pascal VOC 2008 1000 testing
+flickr8k 6000 1000 1000
+flickr30k 28000 1000 1000
+sbu captions 1M traing, fickr uses descirptions, biased, noisy, may not be visual
+combine all caption_datasetsmight not transfer because collected by different groups?
+
+also make a pile of images anyway, don't need captions
+use for psuedo labeling with KD training, semi-supervised
+
+2019-04 the curious case of neural text degeneration
+
+beam search limitation
+if one seq has super high probability, then it will be the parent node for all seq in the next step
+encourage the model to choose from diverse candidates
+top-g clipping, candidates group by parent, top-g from each parent choose, top beamk of this subset is choosen
+only consider the top g hypotheses from each parent at each time step
+
+https://pytorch.org/blog/optimizing-cuda-rnn-with-torchscript/ - misc ops layernorm cell
+layer norm lstm
+https://github.com/pytorch/pytorch/blob/cbcb2b5ad767622cf5ec04263018609bde3c974a/benchmarks/fastrnns/custom_lstms.py#L149
+
+actual evaluation with the MSCOCO tools
+https://github.com/bityangke/image_captioning/blob/master/base_model.py#L86
+https://github.com/krasserm/fairseq-image-captioning/blob/master/score.py#L12

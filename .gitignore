@@ -3,7 +3,6 @@ __pycache__
 .ipynb_checkpoints
 
 /logs*
-/runs
 
 data/*
 !data/readme
@@ -15,5 +14,3 @@ data/coco/*
 !data/visualize
 data/visualize/*
 !data/visualize/readme.md
-# ^ No way this is a good to keep a single file
-

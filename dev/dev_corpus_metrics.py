@@ -10,7 +10,7 @@ def token_ngrams(sentence, n):
     ngram_dict = {}
     for i in range(len(sentence)-n+1):
         ng_key = " ".join([str(i) for i in sentence[i:i+n]]).lower()
-        if ng_key  in ngram_dict:
+        if ng_key in ngram_dict:
             ngram_dict[ng_key] += 1
         else:
             ngram_dict[ng_key] = 1
@@ -24,7 +24,7 @@ def token_bleu(references, captions, weights):
     if type(weights)==int: weights=[0]*(weights-1) + [1]
     assert type(weights)==list
     # Lists for each ngram numerator and denominator
-    bleu_num, bleu_dem = [0]*len(weights), [0]*len(weights)
+    bleu_num, bleu_den = [0]*len(weights), [0]*len(weights)
     # Totals for the brevity penalty
     cap_lens, ref_lens = 0, 0
     # For each weight get the modified precision
@@ -40,7 +40,7 @@ def token_bleu(references, captions, weights):
                 max_ref_count = max([ref_ngram[cap_key] if cap_key in ref_ngram else 0 for ref_ngram in ref_ngrams ])
                 # Add the totals for modified precision of this ngram size
                 bleu_num[i] += min(cap_count, max_ref_count)  # Clip the cap_count to max count in references
-                bleu_dem[i] += cap_count
+                bleu_den[i] += cap_count
                 # Add the totals for the brevity penalty
         cap_lens += len(cap)
         # Find the closest length by make a tuple with absolute difference and length, find the min and take the length
@@ -49,13 +49,28 @@ def token_bleu(references, captions, weights):
     brevity_penalty = np.exp( min(0, 1-ref_lens/cap_lens) )  # Should not be more than 1 so us min(0, x)
     # print(f"{cap_lens = } {ref_lens = }")
     # print(f"{brevity_penalty = }")
-    # print(f"{bleu_num = } {bleu_dem = }")
-    return brevity_penalty*np.exp( np.sum([w*np.log(bleu_num[i]/bleu_dem[i]) if bleu_dem[i]!=0 else 0 for i,w in enumerate(weights)]) )
+    # print(f"{bleu_num = } {bleu_den = }")
+    weighted_log_sum = np.sum([w*np.log(bleu_num[i]/bleu_den[i]+1e-9) if (bleu_den[i]!=0) else 0 for i,w in enumerate(weights)])
+    bleu = brevity_penalty*np.exp(weighted_log_sum)
+    return bleu
+
+
+def token_gleu(references, captions, max_ngram=4):
+    """ These Equations came straight from the paper:
+        'BLEU a Method for Automatic Evaluation of Machine Translation'
+    """
+    assert len(references)==len(captions)
+
+    gleu = 0
+    return gleu
+
 
 
 references = [
-    [[1, 2, 3, 4, 5, 6, 7], [3, 4, 5, 6], [5, 6, 7, 8]],
-    [[1, 2, 3, 4, 5, 6, 7], [3, 4, 5, 6], [5, 6, 7, 8]],
+    # [[1, 2, 3, 4, 5, 6, 7], [3, 4, 5, 6], [5, 6, 7, 8]],
+    # [[1, 2, 3, 4, 5, 6, 7], [3, 4, 5, 6], [5, 6, 7, 8]],
+    [[1,2,3], [4,5,6]],
+    [[1], [4,5]],
 ]
 captions = [
     [2, 4, 5, 6, 7],

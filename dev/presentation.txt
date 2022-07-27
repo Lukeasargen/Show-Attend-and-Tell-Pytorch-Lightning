@@ -1,0 +1,162 @@
+
+MY IMPLEMENTATION - in order of appearance in the video
+    - preprocess - subset of mscoco, so cannot easily compare to other implementations
+        - any size vocabulary
+        - set the maximum length of captions for training
+    - custom dataset - preprocessing saved in 1 json
+    - bucket_sampler - groups the training data by caption length
+    - Pytorch Lightning :)
+        - gradient clipping
+        - validation interval
+        - early stopping
+        - model checkpointing
+        - mixed precision
+    - encoder, get_encoder returns nn.Module
+        - norm layer on top of sequential model, easy input
+        - use pretrained encoder
+        - can finetine with encoder_finetune and encoder_lr
+        - set encoder_dim with 1x1 conv (not pretrained, does not match paper)
+        - set encoder_size with AdaptiveAvgPool2d - illustraion show the tensors, does not pool if tensor is smaller than encoder_size
+    - decoder, pl.LightingModule
+        - lstm init - uses linear+tanh for MLP
+        - soft attention
+        - multiple layer lstm, set decoder_layers>1
+        - no LSTM dropout - https://datascience.stackexchange.com/questions/38205/dropout-on-which-layers-of-lstm
+        - optional deep output, else use last hidden
+    - different sampling procedures
+        - beam search, beamk=1 for gready
+        - sampling temperature, single value or list of temperatures - a read a few papers and none use this while sampling? why?
+        - rescoring, several methods to rank the final predictions
+
+
+New features
+- optional teacher forcing during training, use decoder_tf
+- teacher forcing schedule
+- lr warmup
+- label smoothing
+- glove embeddings
+- weight tying - 2017-03 Tying Word Vectors and Word Classifier (has diagrams https://github.com/icoxfog417/tying-wv-and-wc)
+
+
+
+Get data
+many open source datasets available for this problem, like Flickr 8k (containing8k images), Flickr 30k (containing 30k images), MS COCO (containing 180k images)
+
+Understanding the data
+
+Preprocess the captions
+Preprocess the images
+
+The dataloader
+
+Model Architecture
+Encoder - conv
+2014-11-17 Show and Tell A Neural Image Caption Generator - Figure 3 shows inception, googlenet
+2015-02-10 Show, Attend and Tell Neural Image Caption Generation with Visual Attention - 4.3 VGGnet pretrained on imagenet, no finetuning
+encoder_size - possible experiment, how many locations? avoid overfitting -> make references to this idea in Future Improvements
+
+Decoder - Sec 3.1.2
+word embeddings, lstm, attention
+graph that shows the effect of normalizing embeddings, reduces the impact of word frequency
+https://polyglot.readthedocs.io/en/latest/Embeddings.html#nearest-neighbors
+
+will predict the caption word by word. Thus, we need to encode each word into a fixed sized vector
+https://www.analyticsvidhya.com/blog/2017/06/word-embeddings-count-word2veec/
+
+
+
+2013-12-20 How to Construct Deep Recurrent Neural Networks
+deep_output_eq_7.png - bleu4=17.03
+capgen.py#L678 - start eq 7
+proj_vocab( drop( tanh( proj_emb( drop(h) ) + prev_emb + proj_emb(zt) ) ) )
+the model can still completely ignore the current input (set the hidden and context proj to 0 weights)
+output conditioned on the previous input embedding
+
+
+Training step
+
+For progressively harder problems, use curriculum learning
+1989-06 A Learning Algorithm for Continually Running Fully Recurrent Neural Networks, Teacher Forcing, Section 2.3
+2015-09-23 Scheduled Sampling for Sequence Prediction with Recurrent Neural Networks
+The approach is called curriculum learning and involves randomly choosing to use the ground truth output or the generated output from the previous time step as input for the current time step.
+The curriculum changes over time in what is called scheduled sampling where the procedure starts at forced learning and slowly decreases the probability of a forced input over the training epochs.
+While dropout helped in terms of log likelihood (as expected but not shown), it had a negative impact on the real metrics.
+4.1 - We also experimented with flipping the coin once per sequence instead of once per token, but the results were as poor as the Always Sampling approach.
+
+Explore the hidden space can also be done by injecting noise during inference.
+
+
+
+Validation step - evaluation
+
+Generating captions
+
+beam search
+
+2014-11-17 Show and Tell A Neural Image Caption Generator:
+4.3.4 - If we take the best candidate, the sentence is present in the training set 80% of the times.
+
+BLEU - precision of token n-grams between generated and reference sentences
+perplexity is the geometric mean of the inverse probability for each predicted token
+
+temperature scaling
+On Calibration of Modern Neural Networks
+The method to get an optimal temperature T for a trained model is through minimizing the negative log likelihood for a held-out validation dataset.
+2017-10-03 On Calibration of Modern Neural Networks - 4.2. Extension to Multiclass Models
+
+
+
+Experiments
+
+Things known section - from papers
+2014-11-17 Show and Tell A Neural Image Caption Generator:
+4.3.1 - pretrained CNN generalizes better
+4.3.1 - random init the word embeddings
+4.3.1 - use dropout and ensembling
+
+vocab_size = 10000
+batch = 64
+homogenous batch lengths
+capgen.py#L83 - dropout p=0.5
+
+Bucket sampler
+1k images, 20 epochs
+Shuffle : 2m01s
+Bucket : 1m44s
+32k images, 90 epochs
+Shuffle : 2h1m33s
+Bucket : 1h53m1s
+
+
+Conclusions
+Text generation is hard
+
+
+Future Improvements
+Note that due to the stochastic decoding, the captions generated by you may not be exactly similar to those generated in my case
+Using a larger dataset
+Doing more hyper parameter tuning
+Different attention mechanism
+
+Future Overfitting Fix
+2014-11-17 Show and Tell A Neural Image Caption Generator
+4.3.3 - whole thing is overfitting Processing
+2016-11-05 Boosting Image Captioning with Attributes
+possible fixes to overfitting with attributes, LSTM-A3
+lowercase, discard <5, 8791 unique words
+attributes = 1000 most common words, 1000-way probability vector
+decoder_dim=1024, input is also 1024
+lr=1e-2, batch=1024, drop loss by 25% at epoch 123 ish (50k iterations)
+
+Image blackout
+pass a black image to encoder and use the language model to caption, helps learn a more stable feature space for the encoder
+
+Two layers for word embeddings
+A smaller 128 dim embedding table then a linear projection to 256 dim
+Possibly model the words in 128 are very dense but the projection will become spare if regularized
+Low data, the projection will overfit
+Should be easier to learn this than the embedding table
+
+
+
+
